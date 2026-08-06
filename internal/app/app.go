@@ -110,6 +110,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/reports/export", a.exportPeriod)
 	m.HandleFunc("GET /api/offices", a.offices)
 	m.HandleFunc("POST /api/offices", a.createOffice)
+	m.HandleFunc("PUT /api/offices/order", a.reorderOffices)
 	m.HandleFunc("PUT /api/offices/{id}", a.updateOffice)
 	m.HandleFunc("GET /api/settings", a.settings)
 	m.HandleFunc("PUT /api/settings", a.updateSettings)

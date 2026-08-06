@@ -197,7 +197,7 @@ func (a *App) createOffice(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Название обязательно")
 		return
 	}
-	err := a.db.QueryRow(r.Context(), `INSERT INTO offices(name,sort_order) VALUES($1,$2) RETURNING id`, strings.TrimSpace(o.Name), o.SortOrder).Scan(&o.ID)
+	err := a.db.QueryRow(r.Context(), `INSERT INTO offices(name,sort_order) VALUES($1,COALESCE((SELECT max(sort_order)+1 FROM offices),1)) RETURNING id,sort_order`, strings.TrimSpace(o.Name)).Scan(&o.ID, &o.SortOrder)
 	if err != nil {
 		problem(w, 409, "Такое РП уже существует")
 		return
@@ -212,12 +212,60 @@ func (a *App) updateOffice(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &o) {
 		return
 	}
-	tag, err := a.db.Exec(r.Context(), `UPDATE offices SET name=$2,sort_order=$3,active=$4,updated_at=now() WHERE id=$1`, r.PathValue("id"), strings.TrimSpace(o.Name), o.SortOrder, o.Active)
+	if strings.TrimSpace(o.Name) == "" {
+		problem(w, 422, "Название обязательно")
+		return
+	}
+	tag, err := a.db.Exec(r.Context(), `UPDATE offices SET name=$2,active=$3,updated_at=now() WHERE id=$1`, r.PathValue("id"), strings.TrimSpace(o.Name), o.Active)
 	if err != nil || tag.RowsAffected() == 0 {
 		problem(w, 422, "Не удалось обновить РП")
 		return
 	}
 	a.log(r.Context(), "office.updated", "office", r.PathValue("id"))
+	jsonOut(w, 200, map[string]bool{"ok": true})
+}
+
+func (a *App) reorderOffices(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	var x struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &x) {
+		return
+	}
+	var total int
+	if err := a.db.QueryRow(r.Context(), `SELECT count(*) FROM offices`).Scan(&total); err != nil {
+		serverError(w, err)
+		return
+	}
+	seen := make(map[string]struct{}, len(x.IDs))
+	for _, id := range x.IDs {
+		seen[id] = struct{}{}
+	}
+	if len(x.IDs) != total || len(seen) != total {
+		problem(w, 422, "Передан неполный порядок РП")
+		return
+	}
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	for i, id := range x.IDs {
+		tag, updateErr := tx.Exec(r.Context(), `UPDATE offices SET sort_order=$2,updated_at=now() WHERE id=$1`, id, i+1)
+		if updateErr != nil || tag.RowsAffected() != 1 {
+			problem(w, 422, "Не удалось сохранить порядок РП")
+			return
+		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	a.log(r.Context(), "office.reordered", "office", strings.Join(x.IDs, ","))
 	jsonOut(w, 200, map[string]bool{"ok": true})
 }
 

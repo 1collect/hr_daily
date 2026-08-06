@@ -1,0 +1,11 @@
+{
+  "name": "hr-report-web",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc && cp src/index.html src/ui.css dist/"
+  },
+  "devDependencies": {
+    "typescript": "5.7.3"
+  }
+}

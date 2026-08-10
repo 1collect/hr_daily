@@ -14,6 +14,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"hrreport/migrations"
 )
 
 type Config struct {
@@ -50,7 +52,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer db.Close()
-	if err = migrate(ctx, db); err != nil {
+	if err = migrations.Up(ctx, db); err != nil {
 		return fmt.Errorf("migrations: %w", err)
 	}
 
@@ -72,26 +74,6 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		return err
 	}
-}
-
-func migrate(ctx context.Context, db *pgxpool.Pool) error {
-	files, err := filepath.Glob("migrations/*.sql")
-	if err != nil {
-		return err
-	}
-	if len(files) == 0 {
-		return errors.New("no migration files found")
-	}
-	for _, name := range files {
-		b, err := os.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		if _, err = db.Exec(ctx, string(b)); err != nil {
-			return fmt.Errorf("%s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 func (a *App) routes() http.Handler {

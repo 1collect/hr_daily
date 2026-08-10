@@ -18,6 +18,5 @@ USER app
 WORKDIR /app
 COPY --from=build /out/hr-server /app/hr-server
 COPY --from=web-build /web/dist /app/web
-COPY migrations /app/migrations
 EXPOSE 8080
 CMD ["/app/hr-server"]

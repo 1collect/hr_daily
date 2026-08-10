@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -14,6 +15,17 @@ func TestEfficiency(t *testing.T) {
 		if got := Efficiency(tt.interviewed, tt.plan); got != tt.want {
 			t.Fatalf("Efficiency(%d,%d)=%v, want %v", tt.interviewed, tt.plan, got, tt.want)
 		}
+	}
+}
+
+func TestCleanPeople(t *testing.T) {
+	got := cleanPeople(map[string][]string{
+		"invited_candidates": {"  Иванов Иван  ", " ", "Петров Пётр"},
+		"unknown":            {"Не должен сохраниться"},
+	})
+	want := map[string][]string{"invited_candidates": {"Иванов Иван", "Петров Пётр"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cleanPeople()=%v, want %v", got, want)
 	}
 }
 

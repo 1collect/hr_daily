@@ -160,6 +160,8 @@ type reportRow struct {
 	Efficiency            float64                       `json:"efficiency"`
 	HiredWorkers          []string                      `json:"hiredWorkers"`
 	HiredDetails          []hiredDetail                 `json:"hiredDetails,omitempty"`
+	People                map[string][]string           `json:"people"`
+	PeopleDetails         map[string][]hiredDetail      `json:"peopleDetails,omitempty"`
 	Contributions         map[string][]cellContribution `json:"contributions,omitempty"`
 }
 
@@ -312,6 +314,8 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		x.Efficiency = Efficiency(x.InterviewedCandidates, x.InterviewPlan)
 		x.HiredWorkers = make([]string, hires)
 		x.HiredDetails = []hiredDetail{}
+		x.People = map[string][]string{}
+		x.PeopleDetails = map[string][]hiredDetail{}
 		x.Contributions = map[string][]cellContribution{}
 		out = append(out, x)
 	}
@@ -382,6 +386,28 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	if err = hiredRows.Err(); err != nil {
 		return nil, err
 	}
+	peopleRows, err := a.db.Query(ctx, `SELECT rr.office_id,p.category,p.full_name,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
+		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
+		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
+		JOIN report_row_people p ON p.report_row_id=rr.id
+		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
+		ORDER BY e.last_name,e.first_name,p.created_at,p.id`, date, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer peopleRows.Close()
+	for peopleRows.Next() {
+		var officeID, category, fullName, responsible string
+		if err = peopleRows.Scan(&officeID, &category, &fullName, &responsible); err != nil {
+			return nil, err
+		}
+		if row := byOffice[officeID]; row != nil {
+			row.PeopleDetails[category] = append(row.PeopleDetails[category], hiredDetail{FullName: fullName, Responsible: responsible})
+		}
+	}
+	if err = peopleRows.Err(); err != nil {
+		return nil, err
+	}
 	shared, err := a.db.Query(ctx, `SELECT ds.office_id,CASE WHEN u.active THEN COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(ds.updated_by_name_snapshot,''),u.username) ELSE '' END,ds.open_vacancies FROM daily_office_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE ds.report_date=$1`, date)
 	if err != nil {
 		return nil, err
@@ -416,6 +442,7 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 			return nil, err
 		}
 		x.HiredWorkers = []string{}
+		x.People = map[string][]string{}
 		out = append(out, x)
 	}
 	for i := range out {
@@ -429,21 +456,39 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 			out[i].HiredWorkers = append(out[i].HiredWorkers, n)
 		}
 		hr.Close()
+		people, err := a.db.Query(ctx, `SELECT category,full_name FROM report_row_people WHERE report_row_id=$1 ORDER BY category,created_at,id`, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for people.Next() {
+			var category, name string
+			if err = people.Scan(&category, &name); err != nil {
+				people.Close()
+				return nil, err
+			}
+			out[i].People[category] = append(out[i].People[category], name)
+		}
+		if err = people.Err(); err != nil {
+			people.Close()
+			return nil, err
+		}
+		people.Close()
 	}
 	return out, q.Err()
 }
 
 type rowInput struct {
-	OpenVacancies         int      `json:"openVacancies"`
-	InvitationThreshold   int      `json:"invitationThreshold"`
-	InvitedCandidates     int      `json:"invitedCandidates"`
-	InterviewPlan         int      `json:"interviewPlan"`
-	InterviewedCandidates int      `json:"interviewedCandidates"`
-	Interns               int      `json:"interns"`
-	ReserveCandidates     int      `json:"reserveCandidates"`
-	DismissedWorkers      int      `json:"dismissedWorkers"`
-	ResponsibleIDs        []string `json:"responsibleIds"`
-	HiredWorkers          []string `json:"hiredWorkers"`
+	OpenVacancies         int                 `json:"openVacancies"`
+	InvitationThreshold   int                 `json:"invitationThreshold"`
+	InvitedCandidates     int                 `json:"invitedCandidates"`
+	InterviewPlan         int                 `json:"interviewPlan"`
+	InterviewedCandidates int                 `json:"interviewedCandidates"`
+	Interns               int                 `json:"interns"`
+	ReserveCandidates     int                 `json:"reserveCandidates"`
+	DismissedWorkers      int                 `json:"dismissedWorkers"`
+	ResponsibleIDs        []string            `json:"responsibleIds"`
+	HiredWorkers          []string            `json:"hiredWorkers"`
+	People                map[string][]string `json:"people"`
 }
 
 func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
@@ -467,6 +512,22 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+	in.People = cleanPeople(in.People)
+	if names, ok := in.People["invited_candidates"]; ok {
+		in.InvitedCandidates = len(names)
+	}
+	if names, ok := in.People["interviewed_candidates"]; ok {
+		in.InterviewedCandidates = len(names)
+	}
+	if names, ok := in.People["interns"]; ok {
+		in.Interns = len(names)
+	}
+	if names, ok := in.People["reserve_candidates"]; ok {
+		in.ReserveCandidates = len(names)
+	}
+	if names, ok := in.People["dismissed_workers"]; ok {
+		in.DismissedWorkers = len(names)
+	}
 	eff := Efficiency(in.InterviewedCandidates, in.InterviewPlan)
 	var officeID, reportDate string
 	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
@@ -509,6 +570,18 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	for category, names := range in.People {
+		if _, err = tx.Exec(ctx, `DELETE FROM report_row_people WHERE report_row_id=$1 AND category=$2`, r.PathValue("id"), category); err != nil {
+			serverError(w, err)
+			return
+		}
+		for _, name := range names {
+			if _, err = tx.Exec(ctx, `INSERT INTO report_row_people(report_row_id,category,full_name) VALUES($1,$2,$3)`, r.PathValue("id"), category, name); err != nil {
+				serverError(w, err)
+				return
+			}
+		}
+	}
 	if _, err = tx.Exec(ctx, `INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES('report_row.updated','report_row',$1,jsonb_build_object('efficiency',$2::numeric))`, r.PathValue("id"), eff); err != nil {
 		serverError(w, err)
 		return
@@ -527,11 +600,29 @@ func hasNegative(x rowInput) bool {
 func nonEmpty(v []string) []string {
 	o := []string{}
 	for _, x := range v {
-		if strings.TrimSpace(x) != "" {
+		if x = strings.TrimSpace(x); x != "" {
 			o = append(o, x)
 		}
 	}
 	return o
+}
+
+var peopleCategories = map[string]struct{}{
+	"invited_candidates":     {},
+	"interviewed_candidates": {},
+	"interns":                {},
+	"reserve_candidates":     {},
+	"dismissed_workers":      {},
+}
+
+func cleanPeople(input map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(input))
+	for category, names := range input {
+		if _, ok := peopleCategories[category]; ok {
+			out[category] = nonEmpty(names)
+		}
+	}
+	return out
 }
 
 func (a *App) completeReport(w http.ResponseWriter, r *http.Request) {

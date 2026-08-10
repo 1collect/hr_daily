@@ -159,6 +159,66 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	if rowNumber > 2 {
 		f.SetCellStyle(detail, "A2", fmt.Sprintf("C%d", rowNumber-1), bodyStyle)
 	}
+	peopleSheet := "Списки ФИО"
+	_, _ = f.NewSheet(peopleSheet)
+	peopleHeaders := []string{"Дата", "РП", "Показатель", "ФИО", "Ответственный"}
+	for i, header := range peopleHeaders {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(peopleSheet, cell, header)
+	}
+	f.SetCellStyle(peopleSheet, "A1", "E1", headerStyle)
+	f.SetRowHeight(peopleSheet, 1, 34)
+	f.SetColWidth(peopleSheet, "A", "A", 14)
+	f.SetColWidth(peopleSheet, "B", "B", 30)
+	f.SetColWidth(peopleSheet, "C", "C", 38)
+	f.SetColWidth(peopleSheet, "D", "E", 34)
+	_ = f.SetPanes(peopleSheet, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})
+	_ = f.AutoFilter(peopleSheet, "A1:E1", nil)
+
+	peopleRows, err := a.db.Query(r.Context(), `SELECT rp.report_date::text,
+		COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),p.category,p.full_name,
+		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
+		FROM report_row_people p
+		JOIN report_rows rr ON rr.id=p.report_row_id
+		JOIN reports rp ON rp.id=rr.report_id
+		JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
+		LEFT JOIN employees e ON e.id=u.employee_id
+		JOIN offices o ON o.id=rr.office_id
+		WHERE rp.report_date BETWEEN $1 AND $2
+		ORDER BY rp.report_date,COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),p.category,e.last_name,e.first_name,p.created_at,p.id`, from, to)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer peopleRows.Close()
+	peopleRowNumber := 2
+	categoryLabels := map[string]string{
+		"invited_candidates":     "Приглашённые кандидаты",
+		"interviewed_candidates": "Прошедшие собеседование",
+		"interns":                "Кандидаты на стажировке",
+		"reserve_candidates":     "Кандидаты в резерве",
+		"dismissed_workers":      "Уволенные работники",
+	}
+	for peopleRows.Next() {
+		var date, office, category, fullName, responsible string
+		if err = peopleRows.Scan(&date, &office, &category, &fullName, &responsible); err != nil {
+			serverError(w, err)
+			return
+		}
+		values := []string{date, office, categoryLabels[category], fullName, responsible}
+		for col, value := range values {
+			cell, _ := excelize.CoordinatesToCellName(col+1, peopleRowNumber)
+			f.SetCellValue(peopleSheet, cell, value)
+		}
+		peopleRowNumber++
+	}
+	if err = peopleRows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	if peopleRowNumber > 2 {
+		f.SetCellStyle(peopleSheet, "A2", fmt.Sprintf("E%d", peopleRowNumber-1), bodyStyle)
+	}
 	f.SetActiveSheet(0)
 	buf, err := f.WriteToBuffer()
 	if err != nil {

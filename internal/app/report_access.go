@@ -37,6 +37,9 @@ func validatePastReportDate(date string) string {
 	if !validDate(date) {
 		return "Дата должна иметь формат YYYY-MM-DD"
 	}
+	if weekendDate(date) {
+		return "Доступ к отчётам за субботу и воскресенье открыть нельзя"
+	}
 	if date >= localToday() {
 		return "Доступ можно открыть только к прошедшим дням"
 	}

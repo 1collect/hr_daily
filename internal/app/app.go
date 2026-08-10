@@ -186,6 +186,10 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Дата должна иметь формат YYYY-MM-DD")
 		return
 	}
+	if weekendDate(date) {
+		problem(w, 422, "Отчёты за субботу и воскресенье недоступны")
+		return
+	}
 	ctx := r.Context()
 	claims := claimsFrom(ctx)
 	var norm int

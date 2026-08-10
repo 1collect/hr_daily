@@ -497,6 +497,10 @@ func (a *App) log(ctx context.Context, action, typ, id string) {
 	_, _ = a.db.Exec(ctx, `INSERT INTO audit_log(action,entity_type,entity_id) VALUES($1,$2,$3)`, action, typ, id)
 }
 func validDate(s string) bool { _, err := time.Parse("2006-01-02", s); return err == nil }
+func weekendDate(s string) bool {
+	date, err := time.Parse("2006-01-02", s)
+	return err == nil && (date.Weekday() == time.Saturday || date.Weekday() == time.Sunday)
+}
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	d := json.NewDecoder(r.Body)

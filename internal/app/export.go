@@ -23,7 +23,9 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, err := a.db.Query(r.Context(), `WITH relevant_reports AS (
-		SELECT rp.* FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
+		SELECT rp.*,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username) AS owner_name
+		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
+		LEFT JOIN employees e ON e.id=u.employee_id
 		WHERE rp.report_date BETWEEN $1 AND $2
 	), office_scope AS (
 		SELECT o.id,
@@ -38,7 +40,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		COALESCE(sum(rr.invited_candidates),0),COALESCE(sum(rr.interview_plan),0),
 		COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
 		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(hc.n),0),COALESCE(sum(rr.dismissed_workers),0),
-		COALESCE(string_agg(DISTINCT NULLIF(rp.owner_name_snapshot,''),', ') FILTER (WHERE rr.id IS NOT NULL),'')
+		COALESCE(string_agg(DISTINCT rp.owner_name,', ') FILTER (WHERE COALESCE(hc.n,0)>0),'')
 	FROM office_scope o LEFT JOIN latest_vacancy lv ON lv.office_id=o.id
 	LEFT JOIN relevant_reports rp ON true
 	LEFT JOIN report_rows rr ON rr.report_id=rp.id AND rr.office_id=o.id
@@ -123,7 +125,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 
 	hires, err := a.db.Query(r.Context(), `SELECT
 		COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),hw.full_name,
-		COALESCE(NULLIF(rp.owner_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name))
+		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM hired_workers hw
 		JOIN report_rows rr ON rr.id=hw.report_row_id
 		JOIN reports rp ON rp.id=rr.report_id
@@ -131,7 +133,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN employees e ON e.id=u.employee_id
 		JOIN offices o ON o.id=rr.office_id
 		WHERE rp.report_date BETWEEN $1 AND $2
-		ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),rp.owner_name_snapshot,hw.created_at`, from, to)
+		ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),e.last_name,e.first_name,e.middle_name,hw.created_at`, from, to)
 	if err != nil {
 		serverError(w, err)
 		return

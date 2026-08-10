@@ -323,7 +323,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		byOffice[out[i].OfficeID] = &out[i]
 	}
 	details, err := a.db.Query(ctx, `WITH hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-		SELECT rr.office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name)),rr.invitation_threshold,
+		SELECT rr.office_id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username),rr.invitation_threshold,
 		rr.invited_candidates,rr.interview_plan,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,
 		COALESCE(hc.n,0),rr.dismissed_workers
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
@@ -360,7 +360,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	if err = details.Err(); err != nil {
 		return nil, err
 	}
-	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,COALESCE(NULLIF(rp.owner_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name))
+	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
 		JOIN hired_workers hw ON hw.report_row_id=rr.id
@@ -382,7 +382,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	if err = hiredRows.Err(); err != nil {
 		return nil, err
 	}
-	shared, err := a.db.Query(ctx, `SELECT ds.office_id,CASE WHEN u.active THEN COALESCE(NULLIF(ds.updated_by_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name)) ELSE '' END,ds.open_vacancies FROM daily_office_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE ds.report_date=$1`, date)
+	shared, err := a.db.Query(ctx, `SELECT ds.office_id,CASE WHEN u.active THEN COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(ds.updated_by_name_snapshot,''),u.username) ELSE '' END,ds.open_vacancies FROM daily_office_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE ds.report_date=$1`, date)
 	if err != nil {
 		return nil, err
 	}

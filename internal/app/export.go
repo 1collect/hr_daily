@@ -74,7 +74,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	}
 	total := exportSummaryRow{Office: "ИТОГО"}
 	for i, x := range rows {
-		values := []any{x.Office, x.OpenVacancies, x.InvitationPlan, x.Invited, x.InterviewPlan, x.Interviewed, x.Interns, x.Reserve, x.Hired, x.Dismissed, x.Responsible, Efficiency(x.Interns, x.InterviewPlan)}
+		values := []any{x.Office, x.OpenVacancies, x.InvitationPlan, x.Invited, x.InterviewPlan, x.Interviewed, x.Interns, x.Reserve, x.Hired, x.Dismissed, x.Responsible, Efficiency(x.Interviewed, x.InterviewPlan)}
 		for col, v := range values {
 			cell, _ := excelize.CoordinatesToCellName(col+1, i+2)
 			f.SetCellValue(summary, cell, v)
@@ -90,7 +90,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		total.Dismissed += x.Dismissed
 	}
 	totalRow := len(rows) + 2
-	values := []any{"ИТОГО:", total.OpenVacancies, total.InvitationPlan, total.Invited, total.InterviewPlan, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, "", Efficiency(total.Interns, total.InterviewPlan)}
+	values := []any{"ИТОГО:", total.OpenVacancies, total.InvitationPlan, total.Invited, total.InterviewPlan, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, "", Efficiency(total.Interviewed, total.InterviewPlan)}
 	for col, v := range values {
 		cell, _ := excelize.CoordinatesToCellName(col+1, totalRow)
 		f.SetCellValue(summary, cell, v)

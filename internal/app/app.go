@@ -173,11 +173,11 @@ type cellContribution struct {
 	Value float64 `json:"value"`
 }
 
-func Efficiency(interns, plan int) float64 {
+func Efficiency(interviewed, plan int) float64 {
 	if plan <= 0 {
 		return 0
 	}
-	return float64(interns) * 100 / float64(plan)
+	return float64(interviewed) * 100 / float64(plan)
 }
 
 func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +309,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		if err = q.Scan(&x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitationThreshold, &x.InvitedCandidates, &x.InterviewPlan, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &hires); err != nil {
 			return nil, err
 		}
-		x.Efficiency = Efficiency(x.Interns, x.InterviewPlan)
+		x.Efficiency = Efficiency(x.InterviewedCandidates, x.InterviewPlan)
 		x.HiredWorkers = make([]string, hires)
 		x.HiredDetails = []hiredDetail{}
 		x.Contributions = map[string][]cellContribution{}
@@ -355,7 +355,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		add("reserveCandidates", float64(reserve))
 		add("hiredWorkers", float64(hires))
 		add("dismissedWorkers", float64(dismissed))
-		add("efficiency", Efficiency(interns, interviewPlan))
+		add("efficiency", Efficiency(interviewed, interviewPlan))
 	}
 	if err = details.Err(); err != nil {
 		return nil, err
@@ -467,7 +467,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	eff := Efficiency(in.Interns, in.InterviewPlan)
+	eff := Efficiency(in.InterviewedCandidates, in.InterviewPlan)
 	var officeID, reportDate string
 	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
@@ -569,6 +569,6 @@ func totals(rows []reportRow) map[string]any {
 		t["hiredWorkers"] = t["hiredWorkers"].(int) + len(x.HiredWorkers)
 		t["dismissedWorkers"] = t["dismissedWorkers"].(int) + x.DismissedWorkers
 	}
-	t["efficiency"] = Efficiency(t["interns"].(int), t["interviewPlan"].(int))
+	t["efficiency"] = Efficiency(t["interviewedCandidates"].(int), t["interviewPlan"].(int))
 	return t
 }

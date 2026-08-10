@@ -7,12 +7,12 @@ import (
 
 func TestEfficiency(t *testing.T) {
 	tests := []struct {
-		interns, plan int
-		want          float64
+		interviewed, plan int
+		want              float64
 	}{{0, 0, 0}, {3, 0, 0}, {4, 8, 50}, {3, 16, 18.75}}
 	for _, tt := range tests {
-		if got := Efficiency(tt.interns, tt.plan); got != tt.want {
-			t.Fatalf("Efficiency(%d,%d)=%v, want %v", tt.interns, tt.plan, got, tt.want)
+		if got := Efficiency(tt.interviewed, tt.plan); got != tt.want {
+			t.Fatalf("Efficiency(%d,%d)=%v, want %v", tt.interviewed, tt.plan, got, tt.want)
 		}
 	}
 }

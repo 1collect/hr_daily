@@ -189,21 +189,40 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 	_ = a.db.QueryRow(ctx, `SELECT value::int FROM settings WHERE key='invitation_threshold'`).Scan(&norm)
 	if isManager(claims) {
 		employeeID := strings.TrimSpace(r.URL.Query().Get("employeeId"))
+		if employeeID != "" {
+			var active bool
+			_ = a.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id=$1 AND role='employee' AND active AND NOT system)`, employeeID).Scan(&active)
+			if !active {
+				problem(w, 404, "Сотрудник не найден")
+				return
+			}
+		}
 		rows, err := a.loadAggregateRows(ctx, date, employeeID)
 		if err != nil {
 			serverError(w, err)
 			return
 		}
+		if employeeID != "" {
+			_ = a.db.QueryRow(ctx, `SELECT COALESCE((SELECT invitation_norm FROM reports WHERE report_date=$1 AND owner_user_id=$2),$3)`, date, employeeID, norm).Scan(&norm)
+		} else if date == localToday() {
+			_ = a.db.QueryRow(ctx, `SELECT $1::int*count(*) FROM users WHERE role='employee' AND active AND NOT system`, norm).Scan(&norm)
+		} else {
+			_ = a.db.QueryRow(ctx, `SELECT COALESCE(sum(rp.invitation_norm),0) FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system WHERE rp.report_date=$1`, date).Scan(&norm)
+		}
 		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false}, "rows": rows, "norm": norm, "totals": totals(rows)})
 		return
 	}
 	var reportID, status string
-	err := a.db.QueryRow(ctx, `INSERT INTO reports(report_date,owner_user_id) VALUES($1,$2) ON CONFLICT(report_date,owner_user_id) WHERE owner_user_id IS NOT NULL DO UPDATE SET report_date=EXCLUDED.report_date RETURNING id,status`, date, claims.UserID).Scan(&reportID, &status)
+	err := a.db.QueryRow(ctx, `INSERT INTO reports(report_date,owner_user_id,owner_name_snapshot,invitation_norm)
+		SELECT $1,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username),$3
+		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$2
+		ON CONFLICT(report_date,owner_user_id) WHERE owner_user_id IS NOT NULL DO UPDATE SET report_date=EXCLUDED.report_date
+		RETURNING id,status,invitation_norm`, date, claims.UserID, norm).Scan(&reportID, &status, &norm)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	_, err = a.db.Exec(ctx, `INSERT INTO report_rows(report_id,office_id) SELECT $1,id FROM offices WHERE active ON CONFLICT DO NOTHING`, reportID)
+	_, err = a.db.Exec(ctx, `INSERT INTO report_rows(report_id,office_id,office_name_snapshot,office_sort_order_snapshot) SELECT $1,id,name,sort_order FROM offices WHERE active ON CONFLICT DO NOTHING`, reportID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -251,18 +270,25 @@ func localToday() string {
 }
 
 func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]reportRow, error) {
-	q, err := a.db.Query(ctx, `WITH hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
+	q, err := a.db.Query(ctx, `WITH relevant_reports AS (
+		SELECT rp.* FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
+		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
+	), office_scope AS (
+		SELECT o.id,
+		COALESCE((SELECT NULLIF(rr2.office_name_snapshot,'') FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id ORDER BY rp2.created_at LIMIT 1),o.name) AS name,
+		COALESCE((SELECT NULLIF(rr2.office_sort_order_snapshot,0) FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id ORDER BY rp2.created_at LIMIT 1),o.sort_order) AS sort_order
+		FROM offices o WHERE o.active OR EXISTS (SELECT 1 FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id)
+	), hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
 		SELECT o.id,o.name,o.sort_order,
 		COALESCE(ds.open_vacancies,0),COALESCE(sum(rr.invitation_threshold),0),COALESCE(sum(rr.invited_candidates),0),
 		COALESCE(sum(rr.interview_plan),0),COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
 		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hc.n),0)
-		FROM offices o
-		LEFT JOIN reports rp ON rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
-		LEFT JOIN users u ON u.id=rp.owner_user_id AND NOT u.system
-		LEFT JOIN report_rows rr ON rr.office_id=o.id AND rr.report_id=rp.id AND u.id IS NOT NULL
+		FROM office_scope o
+		LEFT JOIN relevant_reports rp ON true
+		LEFT JOIN report_rows rr ON rr.office_id=o.id AND rr.report_id=rp.id
 		LEFT JOIN hc ON hc.report_row_id=rr.id
 		LEFT JOIN daily_office_shared ds ON ds.report_date=$1 AND ds.office_id=o.id
-		WHERE o.active GROUP BY o.id,o.name,o.sort_order,ds.open_vacancies ORDER BY o.sort_order,o.name`, date, ownerID)
+		GROUP BY o.id,o.name,o.sort_order,ds.open_vacancies ORDER BY o.sort_order,o.name`, date, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,10 +314,10 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		byOffice[out[i].OfficeID] = &out[i]
 	}
 	details, err := a.db.Query(ctx, `WITH hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-		SELECT rr.office_id,concat_ws(' ',e.last_name,e.first_name,e.middle_name),rr.invitation_threshold,
+		SELECT rr.office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name)),rr.invitation_threshold,
 		rr.invited_candidates,rr.interview_plan,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,
 		COALESCE(hc.n,0),rr.dismissed_workers
-		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND NOT u.system
+		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
 		LEFT JOIN hc ON hc.report_row_id=rr.id WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
 		ORDER BY e.last_name,e.first_name`, date, ownerID)
@@ -325,8 +351,8 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	if err = details.Err(); err != nil {
 		return nil, err
 	}
-	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,concat_ws(' ',e.last_name,e.first_name,e.middle_name)
-		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND NOT u.system
+	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,COALESCE(NULLIF(rp.owner_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name))
+		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
 		JOIN hired_workers hw ON hw.report_row_id=rr.id
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
@@ -347,7 +373,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	if err = hiredRows.Err(); err != nil {
 		return nil, err
 	}
-	shared, err := a.db.Query(ctx, `SELECT ds.office_id,concat_ws(' ',e.last_name,e.first_name,e.middle_name),ds.open_vacancies FROM daily_office_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE ds.report_date=$1`, date)
+	shared, err := a.db.Query(ctx, `SELECT ds.office_id,CASE WHEN u.active THEN COALESCE(NULLIF(ds.updated_by_name_snapshot,''),concat_ws(' ',e.last_name,e.first_name,e.middle_name)) ELSE '' END,ds.open_vacancies FROM daily_office_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE ds.report_date=$1`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +395,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 }
 
 func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error) {
-	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,o.name,o.sort_order,rr.open_vacancies,rr.invitation_threshold,rr.invited_candidates,rr.interview_plan,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency FROM report_rows rr JOIN offices o ON o.id=rr.office_id WHERE rr.report_id=$1 ORDER BY o.sort_order,o.name`, reportID)
+	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),rr.open_vacancies,rr.invitation_threshold,rr.invited_candidates,rr.interview_plan,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency FROM report_rows rr JOIN offices o ON o.id=rr.office_id WHERE rr.report_id=$1 ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),COALESCE(NULLIF(rr.office_name_snapshot,''),o.name)`, reportID)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +464,10 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "Можно редактировать только свой отчёт за текущий день")
 		return
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO daily_office_shared(report_date,office_id,open_vacancies,updated_by_user_id) VALUES($1,$2,$3,$4) ON CONFLICT(report_date,office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_at=now()`, localToday(), officeID, in.OpenVacancies, claims.UserID)
+	_, err = tx.Exec(ctx, `INSERT INTO daily_office_shared(report_date,office_id,open_vacancies,updated_by_user_id,updated_by_name_snapshot)
+		SELECT $1,$2,$3,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
+		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$4
+		ON CONFLICT(report_date,office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`, localToday(), officeID, in.OpenVacancies, claims.UserID)
 	if err != nil {
 		serverError(w, err)
 		return

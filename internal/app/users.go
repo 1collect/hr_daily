@@ -34,11 +34,15 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	context := strings.TrimSpace(r.URL.Query().Get("context"))
 	roleFilter := ""
-	if c.Role != "superadmin" {
+	if c.Role != "superadmin" || context == "report" {
 		roleFilter = "employee"
 	}
-	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active FROM users u JOIN employees e ON e.id=u.employee_id WHERE NOT u.system AND u.active AND ($1='' OR u.role=$1) ORDER BY e.last_name,e.first_name`, roleFilter)
+	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active
+		FROM users u JOIN employees e ON e.id=u.employee_id
+		WHERE NOT u.system AND u.active AND ($1='' OR u.role=$1)
+		ORDER BY e.last_name,e.first_name`, roleFilter)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -132,8 +136,8 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var employeeID, targetRole string
-	var system bool
-	err := a.db.QueryRow(r.Context(), `SELECT COALESCE(employee_id::text,''),role,system FROM users WHERE id=$1`, r.PathValue("id")).Scan(&employeeID, &targetRole, &system)
+	var system, targetActive bool
+	err := a.db.QueryRow(r.Context(), `SELECT COALESCE(employee_id::text,''),role,system,active FROM users WHERE id=$1`, r.PathValue("id")).Scan(&employeeID, &targetRole, &system, &targetActive)
 	if err == pgx.ErrNoRows {
 		problem(w, 404, "Пользователь не найден")
 		return
@@ -144,6 +148,10 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if system {
 		problem(w, 403, "Системного суперадминистратора нельзя изменять")
+		return
+	}
+	if !targetActive {
+		problem(w, 404, "Пользователь не найден")
 		return
 	}
 	if c.Role != "superadmin" && (targetRole != "employee" || in.Role != "employee") {

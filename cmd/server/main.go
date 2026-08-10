@@ -7,12 +7,31 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"hrreport/internal/app"
+	"hrreport/migrations"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if len(os.Args) == 2 && os.Args[1] == "migrate" {
+		db, err := pgxpool.New(ctx, require("DATABASE_URL"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+		if err = migrations.Up(ctx, db); err != nil {
+			log.Fatalf("migrations: %v", err)
+		}
+		log.Print("database migrations applied")
+		return
+	}
+	if len(os.Args) != 1 {
+		log.Fatalf("usage: %s [migrate]", os.Args[0])
+	}
 
 	cfg := app.Config{
 		DatabaseURL: require("DATABASE_URL"),

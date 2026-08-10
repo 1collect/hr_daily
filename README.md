@@ -30,7 +30,9 @@
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose build
+docker compose run --rm backend /app/hr-server migrate
+docker compose up -d
 ```
 
 Откройте <http://localhost:6770> и войдите под суперадминистратором из `.env`. Сразу после первого входа смените тестовые значения паролей для production-окружения.
@@ -55,6 +57,12 @@ go test ./...
 cd web && npm install && npm run build
 ```
 
-Версионированные миграции применяются при старте только один раз. Выполненные версии и их
-контрольные суммы хранятся в таблице `schema_migrations`; SQL-файлы встроены в Go-бинарник.
-PostgreSQL доступен только во внутренней сети `hr_network`.
+Миграции никогда не запускаются сервером автоматически. Перед первым запуском и после
+добавления новых SQL-файлов их нужно применить отдельной командой:
+
+```bash
+docker compose run --rm backend /app/hr-server migrate
+```
+
+Выполненные версии и их контрольные суммы хранятся в таблице `schema_migrations`; SQL-файлы
+встроены в Go-бинарник. PostgreSQL доступен только во внутренней сети `hr_network`.

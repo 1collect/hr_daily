@@ -105,6 +105,9 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("PUT /api/users/{id}", a.updateUser)
 	m.HandleFunc("DELETE /api/users/{id}", a.deleteUser)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
+	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
+	m.HandleFunc("POST /api/report-access", a.openReportAccess)
+	m.HandleFunc("DELETE /api/report-access", a.closeReportAccess)
 	m.HandleFunc("PUT /api/report/rows/{id}", a.updateRow)
 	m.HandleFunc("POST /api/reports/{id}/complete", a.completeReport)
 	m.HandleFunc("GET /api/reports/export", a.exportPeriod)
@@ -209,7 +212,9 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		} else {
 			_ = a.db.QueryRow(ctx, `SELECT COALESCE(sum(rp.invitation_norm),0) FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system WHERE rp.report_date=$1`, date).Scan(&norm)
 		}
-		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false}, "rows": rows, "norm": norm, "totals": totals(rows)})
+		var accessCount int
+		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
+		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "norm": norm, "totals": totals(rows)})
 		return
 	}
 	var reportID, status string
@@ -236,7 +241,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	editable := date == localToday() && status == "draft"
+	editable := status == "draft" && a.hasReportEditAccess(ctx, claims.UserID, date)
 	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": status, "editable": editable}, "rows": rows, "norm": norm, "totals": totals(rows)})
 }
 
@@ -459,26 +464,28 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	eff := Efficiency(in.Interns, in.InterviewPlan)
-	var officeID string
-	if err = tx.QueryRow(ctx, `SELECT rr.office_id FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.report_date=$3 AND rp.status='draft'`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID); err != nil {
-		problem(w, 409, "Можно редактировать только свой отчёт за текущий день")
+	var officeID, reportDate string
+	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
+		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
+		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate); err != nil {
+		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO daily_office_shared(report_date,office_id,open_vacancies,updated_by_user_id,updated_by_name_snapshot)
 		SELECT $1,$2,$3,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
 		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$4
-		ON CONFLICT(report_date,office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`, localToday(), officeID, in.OpenVacancies, claims.UserID)
+		ON CONFLICT(report_date,office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`, reportDate, officeID, in.OpenVacancies, claims.UserID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	tag, err := tx.Exec(ctx, `UPDATE report_rows rr SET open_vacancies=$2,invitation_threshold=$3,invited_candidates=$4,interview_plan=$5,interviewed_candidates=$6,interns=$7,reserve_candidates=$8,dismissed_workers=$9,efficiency=$10,updated_at=now() FROM reports r WHERE rr.report_id=r.id AND rr.id=$1 AND r.status='draft' AND r.owner_user_id=$11 AND r.report_date=$12`, r.PathValue("id"), 0, in.InvitationThreshold, in.InvitedCandidates, in.InterviewPlan, in.InterviewedCandidates, in.Interns, in.ReserveCandidates, in.DismissedWorkers, eff, claims.UserID, localToday())
+	tag, err := tx.Exec(ctx, `UPDATE report_rows rr SET open_vacancies=$2,invitation_threshold=$3,invited_candidates=$4,interview_plan=$5,interviewed_candidates=$6,interns=$7,reserve_candidates=$8,dismissed_workers=$9,efficiency=$10,updated_at=now() FROM reports r WHERE rr.report_id=r.id AND rr.id=$1 AND r.status='draft' AND r.owner_user_id=$11 AND r.report_date::text=$12`, r.PathValue("id"), 0, in.InvitationThreshold, in.InvitedCandidates, in.InterviewPlan, in.InterviewedCandidates, in.Interns, in.ReserveCandidates, in.DismissedWorkers, eff, claims.UserID, reportDate)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		problem(w, 409, "Можно редактировать только свой отчёт за текущий день")
+		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
 	}
 	_, _ = tx.Exec(ctx, `DELETE FROM report_row_responsibles WHERE report_row_id=$1`, r.PathValue("id"))
@@ -506,7 +513,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	a.reports.send(localToday(), map[string]any{"type": "report_updated", "date": localToday(), "officeId": officeID, "field": "openVacancies", "value": in.OpenVacancies, "updatedBy": claims.Username})
+	a.reports.send(reportDate, map[string]any{"type": "report_updated", "date": reportDate, "officeId": officeID, "field": "openVacancies", "value": in.OpenVacancies, "updatedBy": claims.Username})
 	jsonOut(w, 200, map[string]any{"efficiency": eff, "hiredCount": len(nonEmpty(in.HiredWorkers))})
 }
 
@@ -530,13 +537,15 @@ func (a *App) completeReport(w http.ResponseWriter, r *http.Request) {
 		problem(w, 403, "Недостаточно прав")
 		return
 	}
-	tag, err := a.db.Exec(ctx, `UPDATE reports SET status='completed',completed_at=now(),updated_at=now() WHERE id=$1 AND status='draft' AND owner_user_id=$2`, r.PathValue("id"), claims.UserID)
+	tag, err := a.db.Exec(ctx, `UPDATE reports rp SET status='completed',completed_at=now(),updated_at=now()
+		WHERE rp.id=$1 AND rp.status='draft' AND rp.owner_user_id=$2
+		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		problem(w, 409, "Отчёт уже завершён")
+		problem(w, 409, "Отчёт уже завершён или доступ к нему закрыт")
 		return
 	}
 	_, _ = a.db.Exec(ctx, `INSERT INTO audit_log(action,entity_type,entity_id) VALUES('report.completed','report',$1)`, r.PathValue("id"))

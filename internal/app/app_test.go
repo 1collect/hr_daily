@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestEfficiency(t *testing.T) {
 	tests := []struct {
@@ -22,5 +25,27 @@ func TestValidDate(t *testing.T) {
 		if validDate(value) {
 			t.Fatalf("invalid date accepted: %s", value)
 		}
+	}
+}
+
+func TestValidatePastReportDate(t *testing.T) {
+	today, err := time.Parse("2006-01-02", localToday())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := validatePastReportDate(today.AddDate(0, 0, -1).Format("2006-01-02")); got != "" {
+		t.Fatalf("past date rejected: %s", got)
+	}
+	for _, value := range []string{localToday(), today.AddDate(0, 0, 1).Format("2006-01-02")} {
+		if got := validatePastReportDate(value); got == "" {
+			t.Fatalf("non-past date accepted: %s", value)
+		}
+	}
+}
+
+func TestUniqueUserIDs(t *testing.T) {
+	got := uniqueUserIDs([]string{" first ", "second", "first", "", "second"})
+	if len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("unexpected unique ids: %#v", got)
 	}
 }

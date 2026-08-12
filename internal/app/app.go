@@ -81,6 +81,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("POST /api/users", a.createUser)
 	m.HandleFunc("PUT /api/users/{id}", a.updateUser)
 	m.HandleFunc("POST /api/users/{id}/plans", a.createUserPlan)
+	m.HandleFunc("DELETE /api/users/{id}/plans/{date}", a.deleteFutureUserPlan)
 	m.HandleFunc("DELETE /api/users/{id}", a.deleteUser)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)

@@ -205,6 +205,29 @@ func (a *App) createUserPlan(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, in)
 }
 
+func (a *App) deleteFutureUserPlan(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	date := r.PathValue("date")
+	if !validDate(date) {
+		problem(w, 422, "Укажите корректную дату начала действия плана")
+		return
+	}
+	tag, err := a.db.Exec(r.Context(), `DELETE FROM employee_efficiency_plans
+		WHERE user_id=$1 AND effective_from=$2::date AND effective_from>CURRENT_DATE`, r.PathValue("id"), date)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		problem(w, 404, "Запланированный план не найден")
+		return
+	}
+	a.log(r.Context(), "user.plan.cancelled", "user", r.PathValue("id"))
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 	c, ok := requireManager(w, r)
 	if !ok {

@@ -9,30 +9,36 @@ import (
 )
 
 type userRecord struct {
-	ID           string `json:"id"`
-	EmployeeID   string `json:"employeeId"`
-	Username     string `json:"username"`
-	Role         string `json:"role"`
-	FirstName    string `json:"firstName"`
-	LastName     string `json:"lastName"`
-	MiddleName   string `json:"middleName"`
-	Active       bool   `json:"active"`
-	Plan         int    `json:"plan"`
-	PlanFrom     string `json:"planFrom"`
-	NextPlan     int    `json:"nextPlan"`
-	NextPlanFrom string `json:"nextPlanFrom"`
+	ID                     string `json:"id"`
+	EmployeeID             string `json:"employeeId"`
+	Username               string `json:"username"`
+	Role                   string `json:"role"`
+	FirstName              string `json:"firstName"`
+	LastName               string `json:"lastName"`
+	MiddleName             string `json:"middleName"`
+	Active                 bool   `json:"active"`
+	Plan                   int    `json:"plan"`
+	PlanFrom               string `json:"planFrom"`
+	NextPlan               int    `json:"nextPlan"`
+	NextPlanFrom           string `json:"nextPlanFrom"`
+	MainOfficePlan         int    `json:"mainOfficePlan"`
+	MainOfficePlanFrom     string `json:"mainOfficePlanFrom"`
+	NextMainOfficePlan     int    `json:"nextMainOfficePlan"`
+	NextMainOfficePlanFrom string `json:"nextMainOfficePlanFrom"`
 }
 
 type userInput struct {
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Role       string `json:"role"`
-	FirstName  string `json:"firstName"`
-	LastName   string `json:"lastName"`
-	MiddleName string `json:"middleName"`
-	Active     bool   `json:"active"`
-	Plan       int    `json:"plan"`
-	PlanFrom   string `json:"planFrom"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	Role               string `json:"role"`
+	FirstName          string `json:"firstName"`
+	LastName           string `json:"lastName"`
+	MiddleName         string `json:"middleName"`
+	Active             bool   `json:"active"`
+	Plan               int    `json:"plan"`
+	PlanFrom           string `json:"planFrom"`
+	MainOfficePlan     int    `json:"mainOfficePlan"`
+	MainOfficePlanFrom string `json:"mainOfficePlanFrom"`
 }
 
 func (a *App) users(w http.ResponseWriter, r *http.Request) {
@@ -46,10 +52,13 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 		roleFilter = "employee"
 	}
 	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active,
-		COALESCE(p.plan_count,0),COALESCE(p.effective_from::text,''),COALESCE(np.plan_count,0),COALESCE(np.effective_from::text,'')
+		COALESCE(p.plan_count,0),COALESCE(p.effective_from::text,''),COALESCE(np.plan_count,0),COALESCE(np.effective_from::text,''),
+		COALESCE(mp.plan_count,0),COALESCE(mp.effective_from::text,''),COALESCE(nmp.plan_count,0),COALESCE(nmp.effective_from::text,'')
 		FROM users u JOIN employees e ON e.id=u.employee_id
 		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_efficiency_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) p ON true
 		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_efficiency_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) np ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM main_office_employee_efficiency_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) mp ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM main_office_employee_efficiency_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) nmp ON true
 		WHERE NOT u.system AND u.active AND ($1='' OR u.role=$1)
 		ORDER BY e.last_name,e.first_name`, roleFilter)
 	if err != nil {
@@ -60,7 +69,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	out := []userRecord{}
 	for q.Next() {
 		var x userRecord
-		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom); err != nil {
+		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -92,6 +101,12 @@ func validateUserInput(in userInput, creating bool) string {
 		}
 		if in.Plan > 0 && !validDate(in.PlanFrom) {
 			return "Укажите дату начала действия плана"
+		}
+		if in.MainOfficePlan < 0 {
+			return "План ГО не может быть отрицательным"
+		}
+		if in.MainOfficePlan > 0 && !validDate(in.MainOfficePlanFrom) {
+			return "Укажите дату начала действия плана ГО"
 		}
 	}
 	return ""
@@ -141,12 +156,18 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.Role == "employee" && in.MainOfficePlan > 0 {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO main_office_employee_efficiency_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)`, userID, in.MainOfficePlan, in.MainOfficePlanFrom); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
 	}
 	a.log(r.Context(), "user.created", "user", userID)
-	jsonOut(w, 201, userRecord{ID: userID, EmployeeID: employeeID, Username: strings.TrimSpace(in.Username), Role: in.Role, FirstName: strings.TrimSpace(in.FirstName), LastName: strings.TrimSpace(in.LastName), MiddleName: strings.TrimSpace(in.MiddleName), Active: true, Plan: in.Plan, PlanFrom: in.PlanFrom})
+	jsonOut(w, 201, userRecord{ID: userID, EmployeeID: employeeID, Username: strings.TrimSpace(in.Username), Role: in.Role, FirstName: strings.TrimSpace(in.FirstName), LastName: strings.TrimSpace(in.LastName), MiddleName: strings.TrimSpace(in.MiddleName), Active: true, Plan: in.Plan, PlanFrom: in.PlanFrom, MainOfficePlan: in.MainOfficePlan, MainOfficePlanFrom: in.MainOfficePlanFrom})
 }
 
 func (a *App) createUserPlan(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +246,67 @@ func (a *App) deleteFutureUserPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.log(r.Context(), "user.plan.cancelled", "user", r.PathValue("id"))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *App) createMainOfficeUserPlan(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	var in struct {
+		Plan     int    `json:"plan"`
+		PlanFrom string `json:"planFrom"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Plan < 0 {
+		problem(w, 422, "План ГО не может быть отрицательным")
+		return
+	}
+	if !validDate(in.PlanFrom) {
+		problem(w, 422, "Укажите корректную дату начала действия плана ГО")
+		return
+	}
+	var allowed bool
+	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='employee' AND active AND NOT system)`, r.PathValue("id")).Scan(&allowed); err != nil {
+		serverError(w, err)
+		return
+	}
+	if !allowed {
+		problem(w, 404, "Сотрудник не найден")
+		return
+	}
+	_, err := a.db.Exec(r.Context(), `INSERT INTO main_office_employee_efficiency_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)
+		ON CONFLICT(user_id,effective_from) DO UPDATE SET plan_count=EXCLUDED.plan_count`, r.PathValue("id"), in.Plan, in.PlanFrom)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	a.log(r.Context(), "user.main_office_plan.updated", "user", r.PathValue("id"))
+	jsonOut(w, 200, in)
+}
+
+func (a *App) deleteFutureMainOfficeUserPlan(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	date := r.PathValue("date")
+	if !validDate(date) {
+		problem(w, 422, "Укажите корректную дату начала действия плана ГО")
+		return
+	}
+	tag, err := a.db.Exec(r.Context(), `DELETE FROM main_office_employee_efficiency_plans
+		WHERE user_id=$1 AND effective_from=$2::date AND effective_from>CURRENT_DATE`, r.PathValue("id"), date)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		problem(w, 404, "Запланированный план ГО не найден")
+		return
+	}
+	a.log(r.Context(), "user.main_office_plan.cancelled", "user", r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 

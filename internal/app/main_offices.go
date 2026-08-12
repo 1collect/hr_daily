@@ -139,14 +139,19 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		rows, err := a.loadMainOfficeAggregateRows(ctx, date, employeeID)
+		plan, err := a.mainOfficeEfficiencyPlanTotal(ctx, date, employeeID)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		rows, err := a.loadMainOfficeAggregateRows(ctx, date, employeeID, plan)
 		if err != nil {
 			serverError(w, err)
 			return
 		}
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
-		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": 0, "totals": totals(rows, 0)})
+		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
 		return
 	}
 	var reportID string
@@ -169,8 +174,28 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	plan, err := a.mainOfficeEfficiencyPlanTotal(ctx, date, claims.UserID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	for index := range rows {
+		rows[index].EfficiencyPlan = plan
+		rows[index].Efficiency = Efficiency(rows[index].InterviewedCandidates, plan)
+	}
 	editable := a.hasReportEditAccess(ctx, claims.UserID, date)
-	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": "draft", "editable": editable}, "rows": rows, "plan": 0, "totals": totals(rows, 0)})
+	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": "draft", "editable": editable}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
+}
+
+func (a *App) mainOfficeEfficiencyPlanTotal(ctx context.Context, date, ownerID string) (int, error) {
+	var plan int
+	err := a.db.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE((
+		SELECT p.plan_count FROM main_office_employee_efficiency_plans p
+		WHERE p.user_id=u.id AND p.effective_from<=$1::date
+		ORDER BY p.effective_from DESC LIMIT 1
+	),0)),0)::int FROM users u
+	WHERE u.role='employee' AND u.active AND NOT u.system AND ($2='' OR u.id::text=$2)`, date, ownerID).Scan(&plan)
+	return plan, err
 }
 
 func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]reportRow, error) {
@@ -226,7 +251,7 @@ func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]
 	return rows, nil
 }
 
-func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID string) ([]reportRow, error) {
+func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID string, plan int) ([]reportRow, error) {
 	q, err := a.db.Query(ctx, `WITH relevant_reports AS (
 		SELECT rp.* FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
@@ -257,6 +282,8 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 		row.People = map[string][]string{}
 		row.PeopleDetails = map[string][]hiredDetail{}
 		row.Contributions = map[string][]cellContribution{}
+		row.EfficiencyPlan = plan
+		row.Efficiency = Efficiency(row.InterviewedCandidates, plan)
 		rows = append(rows, row)
 	}
 	if err = q.Err(); err != nil {
@@ -266,7 +293,7 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	for index := range rows {
 		byOffice[rows[index].OfficeID] = &rows[index]
 	}
-	contributions, err := a.db.Query(ctx, `SELECT rr.main_office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,(SELECT count(*) FROM main_office_hired_workers h WHERE h.report_row_id=rr.id)
+	contributions, err := a.db.Query(ctx, `SELECT rr.main_office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,(SELECT count(*) FROM main_office_hired_workers h WHERE h.report_row_id=rr.id),COALESCE((SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system JOIN main_office_report_rows rr ON rr.report_id=rp.id
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2) ORDER BY rp.owner_name_snapshot`, date, ownerID)
 	if err != nil {
@@ -274,8 +301,8 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	}
 	for contributions.Next() {
 		var officeID, name string
-		var invited, interviewed, interns, reserve, dismissed, hired int
-		if err = contributions.Scan(&officeID, &name, &invited, &interviewed, &interns, &reserve, &dismissed, &hired); err != nil {
+		var invited, interviewed, interns, reserve, dismissed, hired, employeePlan int
+		if err = contributions.Scan(&officeID, &name, &invited, &interviewed, &interns, &reserve, &dismissed, &hired, &employeePlan); err != nil {
 			contributions.Close()
 			return nil, err
 		}
@@ -284,6 +311,7 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 			for key, value := range values {
 				row.Contributions[key] = append(row.Contributions[key], cellContribution{Name: name, Value: float64(value)})
 			}
+			row.Contributions["efficiency"] = append(row.Contributions["efficiency"], cellContribution{Name: name, Value: Efficiency(interviewed, employeePlan)})
 		}
 	}
 	contributions.Close()
@@ -379,7 +407,8 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	var mainOfficeID, reportDate string
-	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate)
+	var plan int
+	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text,COALESCE((SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &plan)
 	if err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
@@ -419,5 +448,5 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log(ctx, "main_office_report_row.updated", "main_office_report_row", r.PathValue("id"))
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "openVacancies", "value": input.OpenVacancies, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": 0, "hiredCount": len(nonEmpty(input.HiredWorkers))})
+	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan), "hiredCount": len(nonEmpty(input.HiredWorkers))})
 }

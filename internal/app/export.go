@@ -8,9 +8,9 @@ import (
 )
 
 type exportSummaryRow struct {
-	Office                                                                                                 string
-	OpenVacancies, InvitationPlan, Invited, InterviewPlan, Interviewed, Interns, Reserve, Hired, Dismissed int
-	Responsible                                                                                            string
+	Office                                                                  string
+	OpenVacancies, Invited, Interviewed, Interns, Reserve, Hired, Dismissed int
+	Responsible                                                             string
 }
 
 func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
@@ -32,20 +32,35 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		COALESCE((SELECT NULLIF(rr2.office_name_snapshot,'') FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id ORDER BY rp2.report_date,rp2.created_at LIMIT 1),o.name) AS name,
 		COALESCE((SELECT NULLIF(rr2.office_sort_order_snapshot,0) FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id ORDER BY rp2.report_date,rp2.created_at LIMIT 1),o.sort_order) AS sort_order
 		FROM offices o WHERE o.active OR EXISTS (SELECT 1 FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id)
+	), hc AS (
+		SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id
 	), latest_vacancy AS (
-		SELECT DISTINCT ON (office_id) office_id,open_vacancies FROM daily_office_shared
-		WHERE report_date BETWEEN $1 AND $2 ORDER BY office_id,report_date DESC,updated_at DESC
-	), hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-	SELECT o.name,COALESCE(lv.open_vacancies,0),COALESCE(sum(rr.invitation_threshold),0),
-		COALESCE(sum(rr.invited_candidates),0),COALESCE(sum(rr.interview_plan),0),
+		SELECT DISTINCT ON (ds.office_id) ds.office_id,ds.open_vacancies
+		FROM daily_office_shared ds
+		WHERE ds.report_date BETWEEN $1 AND $2
+		ORDER BY ds.office_id,ds.report_date DESC,ds.updated_at DESC
+	), activity_responsibles AS (
+		SELECT rr.office_id,rp.owner_name AS responsible
+		FROM relevant_reports rp
+		JOIN report_rows rr ON rr.report_id=rp.id
+		LEFT JOIN hc ON hc.report_row_id=rr.id
+		WHERE rr.invited_candidates>0 OR rr.interviewed_candidates>0 OR rr.interns>0
+			OR rr.reserve_candidates>0 OR rr.dismissed_workers>0 OR COALESCE(hc.n,0)>0
+	), office_responsibles AS (
+		SELECT office_id,string_agg(responsible,', ' ORDER BY responsible) AS responsible
+		FROM activity_responsibles GROUP BY office_id
+	)
+	SELECT o.name,COALESCE(lv.open_vacancies,0),
+		COALESCE(sum(rr.invited_candidates),0),
 		COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
 		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(hc.n),0),COALESCE(sum(rr.dismissed_workers),0),
-		COALESCE(string_agg(DISTINCT rp.owner_name,', ') FILTER (WHERE COALESCE(hc.n,0)>0),'')
+		COALESCE(resp.responsible,'')
 	FROM office_scope o LEFT JOIN latest_vacancy lv ON lv.office_id=o.id
 	LEFT JOIN relevant_reports rp ON true
 	LEFT JOIN report_rows rr ON rr.report_id=rp.id AND rr.office_id=o.id
 	LEFT JOIN hc ON hc.report_row_id=rr.id
-	GROUP BY o.id,o.name,o.sort_order,lv.open_vacancies ORDER BY o.sort_order,o.name`, from, to)
+	LEFT JOIN office_responsibles resp ON resp.office_id=o.id
+	GROUP BY o.id,o.name,o.sort_order,lv.open_vacancies,resp.responsible ORDER BY o.sort_order,o.name`, from, to)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -54,7 +69,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	rows := []exportSummaryRow{}
 	for q.Next() {
 		var x exportSummaryRow
-		if err = q.Scan(&x.Office, &x.OpenVacancies, &x.InvitationPlan, &x.Invited, &x.InterviewPlan, &x.Interviewed, &x.Interns, &x.Reserve, &x.Hired, &x.Dismissed, &x.Responsible); err != nil {
+		if err = q.Scan(&x.Office, &x.OpenVacancies, &x.Invited, &x.Interviewed, &x.Interns, &x.Reserve, &x.Hired, &x.Dismissed, &x.Responsible); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -67,22 +82,20 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	f := excelize.NewFile()
 	summary := "Лист1"
 	f.SetSheetName("Sheet1", summary)
-	headers := []string{" РП", "Количество открытых вакансий", "Минимальный порог приглашенных кандидатов", "Количество приглашенных кандидатов", "План на прошедших собеседование", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Количество кандидатов в резерве", "Количество принятых работников", "Количество уволенных работников", "Ответственный работник", "Эффективность работников"}
+	headers := []string{" РП", "Количество открытых вакансий", "Количество приглашенных кандидатов", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Количество кандидатов в резерве", "Количество принятых работников", "Количество уволенных работников", "Ответственный работник", "Эффективность работников"}
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(summary, cell, h)
 	}
 	total := exportSummaryRow{Office: "ИТОГО"}
 	for i, x := range rows {
-		values := []any{x.Office, x.OpenVacancies, x.InvitationPlan, x.Invited, x.InterviewPlan, x.Interviewed, x.Interns, x.Reserve, x.Hired, x.Dismissed, x.Responsible, Efficiency(x.Interviewed, x.InterviewPlan)}
+		values := []any{x.Office, x.OpenVacancies, x.Invited, x.Interviewed, x.Interns, x.Reserve, x.Hired, x.Dismissed, x.Responsible, Efficiency(x.Interviewed, x.Invited)}
 		for col, v := range values {
 			cell, _ := excelize.CoordinatesToCellName(col+1, i+2)
 			f.SetCellValue(summary, cell, v)
 		}
 		total.OpenVacancies += x.OpenVacancies
-		total.InvitationPlan += x.InvitationPlan
 		total.Invited += x.Invited
-		total.InterviewPlan += x.InterviewPlan
 		total.Interviewed += x.Interviewed
 		total.Interns += x.Interns
 		total.Reserve += x.Reserve
@@ -90,7 +103,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		total.Dismissed += x.Dismissed
 	}
 	totalRow := len(rows) + 2
-	values := []any{"ИТОГО:", total.OpenVacancies, total.InvitationPlan, total.Invited, total.InterviewPlan, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, "", Efficiency(total.Interviewed, total.InterviewPlan)}
+	values := []any{"ИТОГО:", total.OpenVacancies, total.Invited, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, "", Efficiency(total.Interviewed, total.Invited)}
 	for col, v := range values {
 		cell, _ := excelize.CoordinatesToCellName(col+1, totalRow)
 		f.SetCellValue(summary, cell, v)
@@ -99,13 +112,13 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	headerStyle, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11, Bold: true, Color: "000000"}, Alignment: &excelize.Alignment{WrapText: true, Vertical: "center", Horizontal: "center"}, Border: borders})
 	bodyStyle, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11, Color: "000000"}, Border: borders})
 	totalStyle, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11, Bold: true, Color: "000000"}, Border: borders})
-	f.SetCellStyle(summary, "A1", "L1", headerStyle)
+	f.SetCellStyle(summary, "A1", "J1", headerStyle)
 	if len(rows) > 0 {
-		f.SetCellStyle(summary, "A2", fmt.Sprintf("L%d", totalRow-1), bodyStyle)
+		f.SetCellStyle(summary, "A2", fmt.Sprintf("J%d", totalRow-1), bodyStyle)
 	}
-	f.SetCellStyle(summary, fmt.Sprintf("A%d", totalRow), fmt.Sprintf("L%d", totalRow), totalStyle)
+	f.SetCellStyle(summary, fmt.Sprintf("A%d", totalRow), fmt.Sprintf("J%d", totalRow), totalStyle)
 	f.SetRowHeight(summary, 1, 60)
-	widths := map[string]float64{"A": 27.57, "B": 17.29, "C": 15.57, "D": 15.71, "E": 13, "F": 18.71, "G": 14.86, "H": 16.43, "I": 15.57, "J": 13, "K": 14.86, "L": 15.43}
+	widths := map[string]float64{"A": 27.57, "B": 17.29, "C": 15.71, "D": 18.71, "E": 14.86, "F": 16.43, "G": 15.57, "H": 13, "I": 14.86, "J": 15.43}
 	for col, width := range widths {
 		f.SetColWidth(summary, col, col, width)
 	}

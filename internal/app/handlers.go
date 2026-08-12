@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +21,7 @@ func (a *App) history(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Укажите период в формате YYYY-MM-DD")
 		return
 	}
-	q, err := a.db.Query(r.Context(), `SELECT rp.id,rp.report_date::text,rp.status,COALESCE((SELECT sum(invitation_threshold) FROM report_rows WHERE report_id=rp.id),0),COALESCE((SELECT sum(invited_candidates) FROM report_rows WHERE report_id=rp.id),0),COALESCE((SELECT sum(interns) FROM report_rows WHERE report_id=rp.id),0),COALESCE((SELECT count(*) FROM hired_workers hw JOIN report_rows rr ON rr.id=hw.report_row_id WHERE rr.report_id=rp.id),0) FROM reports rp WHERE rp.report_date BETWEEN $1 AND $2 ORDER BY rp.report_date DESC`, from, to)
+	q, err := a.db.Query(r.Context(), `SELECT rp.id,rp.report_date::text,rp.status,COALESCE((SELECT sum(invited_candidates) FROM report_rows WHERE report_id=rp.id),0),COALESCE((SELECT sum(interns) FROM report_rows WHERE report_id=rp.id),0),COALESCE((SELECT count(*) FROM hired_workers hw JOIN report_rows rr ON rr.id=hw.report_row_id WHERE rr.report_id=rp.id),0) FROM reports rp WHERE rp.report_date BETWEEN $1 AND $2 ORDER BY rp.report_date DESC`, from, to)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -31,12 +30,12 @@ func (a *App) history(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for q.Next() {
 		var id, d, s string
-		var threshold, invited, interns, hires int
-		if err = q.Scan(&id, &d, &s, &threshold, &invited, &interns, &hires); err != nil {
+		var invited, interns, hires int
+		if err = q.Scan(&id, &d, &s, &invited, &interns, &hires); err != nil {
 			serverError(w, err)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "date": d, "status": s, "threshold": threshold, "invited": invited, "interns": interns, "hires": hires})
+		out = append(out, map[string]any{"id": id, "date": d, "status": s, "invited": invited, "interns": interns, "hires": hires})
 	}
 	jsonOut(w, 200, out)
 }
@@ -54,7 +53,7 @@ func (a *App) exportReports(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Некорректная дата окончания")
 		return
 	}
-	q, err := a.db.Query(r.Context(), `SELECT rp.report_date::text,o.name,rr.open_vacancies,rr.invitation_threshold,rr.invited_candidates,rr.interview_plan,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,count(DISTINCT hw.id),rr.dismissed_workers,COALESCE(string_agg(DISTINCT concat_ws(' ',e.last_name,e.first_name,e.middle_name),', '),''),rr.efficiency FROM reports rp JOIN report_rows rr ON rr.report_id=rp.id JOIN offices o ON o.id=rr.office_id LEFT JOIN hired_workers hw ON hw.report_row_id=rr.id LEFT JOIN report_row_responsibles re ON re.report_row_id=rr.id LEFT JOIN employees e ON e.id=re.employee_id WHERE rp.report_date BETWEEN $1 AND $2 GROUP BY rp.report_date,o.id,o.name,o.sort_order,rr.id ORDER BY rp.report_date,o.sort_order`, from, to)
+	q, err := a.db.Query(r.Context(), `SELECT rp.report_date::text,o.name,rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,count(DISTINCT hw.id),rr.dismissed_workers,COALESCE(string_agg(DISTINCT concat_ws(' ',e.last_name,e.first_name,e.middle_name),', '),''),rr.efficiency FROM reports rp JOIN report_rows rr ON rr.report_id=rp.id JOIN offices o ON o.id=rr.office_id LEFT JOIN hired_workers hw ON hw.report_row_id=rr.id LEFT JOIN report_row_responsibles re ON re.report_row_id=rr.id LEFT JOIN employees e ON e.id=re.employee_id WHERE rp.report_date BETWEEN $1 AND $2 GROUP BY rp.report_date,o.id,o.name,o.sort_order,rr.id ORDER BY rp.report_date,o.sort_order`, from, to)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -63,23 +62,23 @@ func (a *App) exportReports(w http.ResponseWriter, r *http.Request) {
 	f := excelize.NewFile()
 	sheet := "Отчёт"
 	f.SetSheetName("Sheet1", sheet)
-	headers := []string{"Дата", "РП", "Количество открытых вакансий", "План", "Количество приглашенных кандидатов", "План на прошедших собеседование", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Количество кандидатов в резерве", "Количество принятых работников", "Количество уволенных работников", "Ответственный работник", "Эффективность работников, %"}
+	headers := []string{"Дата", "РП", "Количество открытых вакансий", "Количество приглашенных кандидатов", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Количество кандидатов в резерве", "Количество принятых работников", "Количество уволенных работников", "Ответственный работник", "Эффективность работников, %"}
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
 	}
 	row := 2
 	for q.Next() {
-		var vals [13]any
+		var vals [11]any
 		var d, o string
-		var a1, a2, a3, a4, a5, a6, a7, hires, dismiss int
+		var a1, a2, a3, a4, a5, hires, dismiss int
 		var resp string
 		var eff float64
-		if err = q.Scan(&d, &o, &a1, &a2, &a3, &a4, &a5, &a6, &a7, &hires, &dismiss, &resp, &eff); err != nil {
+		if err = q.Scan(&d, &o, &a1, &a2, &a3, &a4, &a5, &hires, &dismiss, &resp, &eff); err != nil {
 			serverError(w, err)
 			return
 		}
-		vals = [13]any{d, o, a1, a2, a3, a4, a5, a6, a7, hires, dismiss, resp, eff}
+		vals = [11]any{d, o, a1, a2, a3, a4, a5, hires, dismiss, resp, eff}
 		for i, v := range vals {
 			cell, _ := excelize.CoordinatesToCellName(i+1, row)
 			f.SetCellValue(sheet, cell, v)
@@ -87,12 +86,12 @@ func (a *App) exportReports(w http.ResponseWriter, r *http.Request) {
 		row++
 	}
 	style, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true, Color: "FFFFFF"}, Fill: excelize.Fill{Type: "pattern", Color: []string{"2563EB"}, Pattern: 1}, Alignment: &excelize.Alignment{WrapText: true, Vertical: "center"}})
-	f.SetCellStyle(sheet, "A1", "M1", style)
+	f.SetCellStyle(sheet, "A1", "K1", style)
 	f.SetRowHeight(sheet, 1, 48)
 	f.SetColWidth(sheet, "A", "A", 13)
 	f.SetColWidth(sheet, "B", "B", 30)
-	f.SetColWidth(sheet, "C", "M", 19)
-	f.AutoFilter(sheet, "A1:M1", nil)
+	f.SetColWidth(sheet, "C", "K", 19)
+	f.AutoFilter(sheet, "A1:K1", nil)
 	buf, err := f.WriteToBuffer()
 	if err != nil {
 		serverError(w, err)
@@ -267,33 +266,6 @@ func (a *App) reorderOffices(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log(r.Context(), "office.reordered", "office", strings.Join(x.IDs, ","))
 	jsonOut(w, 200, map[string]bool{"ok": true})
-}
-
-func (a *App) settings(w http.ResponseWriter, r *http.Request) {
-	if _,ok:=requireManager(w,r);!ok{return}
-	var v int
-	_ = a.db.QueryRow(r.Context(), `SELECT value::int FROM settings WHERE key='invitation_threshold'`).Scan(&v)
-	jsonOut(w, 200, map[string]int{"invitationThreshold": v})
-}
-func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
-	if _,ok:=requireManager(w,r);!ok{return}
-	var x struct {
-		InvitationThreshold int `json:"invitationThreshold"`
-	}
-	if !decode(w, r, &x) {
-		return
-	}
-	if x.InvitationThreshold < 0 {
-		problem(w, 422, "Норматив не может быть отрицательным")
-		return
-	}
-	_, err := a.db.Exec(r.Context(), `UPDATE settings SET value=$1,updated_at=now() WHERE key='invitation_threshold'`, strconv.Itoa(x.InvitationThreshold))
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	a.log(r.Context(), "settings.updated", "settings", "invitation_threshold")
-	jsonOut(w, 200, x)
 }
 
 func (a *App) audit(w http.ResponseWriter, r *http.Request) {

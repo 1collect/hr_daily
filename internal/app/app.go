@@ -80,6 +80,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/users", a.users)
 	m.HandleFunc("POST /api/users", a.createUser)
 	m.HandleFunc("PUT /api/users/{id}", a.updateUser)
+	m.HandleFunc("POST /api/users/{id}/plans", a.createUserPlan)
 	m.HandleFunc("DELETE /api/users/{id}", a.deleteUser)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
@@ -131,6 +132,7 @@ type reportRow struct {
 	ReserveCandidates     int                           `json:"reserveCandidates"`
 	DismissedWorkers      int                           `json:"dismissedWorkers"`
 	Efficiency            float64                       `json:"efficiency"`
+	EfficiencyPlan        int                           `json:"efficiencyPlan"`
 	HiredWorkers          []string                      `json:"hiredWorkers"`
 	HiredDetails          []hiredDetail                 `json:"hiredDetails,omitempty"`
 	People                map[string][]string           `json:"people"`
@@ -148,11 +150,11 @@ type cellContribution struct {
 	Value float64 `json:"value"`
 }
 
-func Efficiency(interviewed, invited int) float64 {
-	if invited <= 0 {
+func Efficiency(interviewed, plan int) float64 {
+	if plan <= 0 {
 		return 0
 	}
-	return float64(interviewed) * 100 / float64(invited)
+	return float64(interviewed) * 100 / float64(plan)
 }
 
 func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +248,8 @@ func localToday() string {
 
 func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]reportRow, error) {
 	q, err := a.db.Query(ctx, `WITH relevant_reports AS (
-		SELECT rp.* FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
+		SELECT rp.*,COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
+		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
 	), office_scope AS (
 		SELECT o.id,
@@ -257,7 +260,8 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		SELECT o.id,o.name,o.sort_order,
 		COALESCE(ds.open_vacancies,0),COALESCE(sum(rr.invited_candidates),0),
 		COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
-		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hc.n),0)
+		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hc.n),0),
+		COALESCE(sum(rp.efficiency_plan) FILTER (WHERE rr.id IS NOT NULL),0)
 		FROM office_scope o
 		LEFT JOIN relevant_reports rp ON true
 		LEFT JOIN report_rows rr ON rr.office_id=o.id AND rr.report_id=rp.id
@@ -272,10 +276,10 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	for q.Next() {
 		var x reportRow
 		var hires int
-		if err = q.Scan(&x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &hires); err != nil {
+		if err = q.Scan(&x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &hires, &x.EfficiencyPlan); err != nil {
 			return nil, err
 		}
-		x.Efficiency = Efficiency(x.InterviewedCandidates, x.InvitedCandidates)
+		x.Efficiency = Efficiency(x.InterviewedCandidates, x.EfficiencyPlan)
 		x.HiredWorkers = make([]string, hires)
 		x.HiredDetails = []hiredDetail{}
 		x.People = map[string][]string{}
@@ -293,6 +297,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	details, err := a.db.Query(ctx, `WITH hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
 		SELECT rr.office_id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username),
 		rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,
+		COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
 		COALESCE(hc.n,0),rr.dismissed_workers
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
@@ -304,8 +309,8 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	defer details.Close()
 	for details.Next() {
 		var officeID, name string
-		var invited, interviewed, interns, reserve, hires, dismissed int
-		if err = details.Scan(&officeID, &name, &invited, &interviewed, &interns, &reserve, &hires, &dismissed); err != nil {
+		var invited, interviewed, interns, reserve, plan, hires, dismissed int
+		if err = details.Scan(&officeID, &name, &invited, &interviewed, &interns, &reserve, &plan, &hires, &dismissed); err != nil {
 			return nil, err
 		}
 		row := byOffice[officeID]
@@ -321,7 +326,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		add("reserveCandidates", float64(reserve))
 		add("hiredWorkers", float64(hires))
 		add("dismissedWorkers", float64(dismissed))
-		add("efficiency", Efficiency(interviewed, invited))
+		add("efficiency", Efficiency(interviewed, plan))
 	}
 	if err = details.Err(); err != nil {
 		return nil, err
@@ -392,7 +397,9 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 }
 
 func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error) {
-	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency FROM report_rows rr JOIN offices o ON o.id=rr.office_id WHERE rr.report_id=$1 ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),COALESCE(NULLIF(rr.office_name_snapshot,''),o.name)`, reportID)
+	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency,
+		COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id JOIN offices o ON o.id=rr.office_id WHERE rr.report_id=$1 ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),COALESCE(NULLIF(rr.office_name_snapshot,''),o.name)`, reportID)
 	if err != nil {
 		return nil, err
 	}
@@ -400,9 +407,10 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 	out := []reportRow{}
 	for q.Next() {
 		var x reportRow
-		if err = q.Scan(&x.ID, &x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &x.Efficiency); err != nil {
+		if err = q.Scan(&x.ID, &x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &x.Efficiency, &x.EfficiencyPlan); err != nil {
 			return nil, err
 		}
+		x.Efficiency = Efficiency(x.InterviewedCandidates, x.EfficiencyPlan)
 		x.HiredWorkers = []string{}
 		x.People = map[string][]string{}
 		out = append(out, x)
@@ -488,14 +496,17 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 	if names, ok := in.People["dismissed_workers"]; ok {
 		in.DismissedWorkers = len(names)
 	}
-	eff := Efficiency(in.InterviewedCandidates, in.InvitedCandidates)
 	var officeID, reportDate string
-	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
+	var plan int
+	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text,
+		COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
-		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate); err != nil {
+		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate, &plan); err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
 	}
+	eff := Efficiency(in.InterviewedCandidates, plan)
 	_, err = tx.Exec(ctx, `INSERT INTO daily_office_shared(report_date,office_id,open_vacancies,updated_by_user_id,updated_by_name_snapshot)
 		SELECT $1,$2,$3,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
 		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$4
@@ -608,7 +619,7 @@ func (a *App) completeReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func totals(rows []reportRow) map[string]any {
-	t := map[string]any{"openVacancies": 0, "invitedCandidates": 0, "interviewedCandidates": 0, "interns": 0, "reserveCandidates": 0, "hiredWorkers": 0, "dismissedWorkers": 0}
+	t := map[string]any{"openVacancies": 0, "invitedCandidates": 0, "interviewedCandidates": 0, "interns": 0, "reserveCandidates": 0, "hiredWorkers": 0, "dismissedWorkers": 0, "efficiencyPlan": 0}
 	for _, x := range rows {
 		t["openVacancies"] = t["openVacancies"].(int) + x.OpenVacancies
 		t["invitedCandidates"] = t["invitedCandidates"].(int) + x.InvitedCandidates
@@ -617,7 +628,8 @@ func totals(rows []reportRow) map[string]any {
 		t["reserveCandidates"] = t["reserveCandidates"].(int) + x.ReserveCandidates
 		t["hiredWorkers"] = t["hiredWorkers"].(int) + len(x.HiredWorkers)
 		t["dismissedWorkers"] = t["dismissedWorkers"].(int) + x.DismissedWorkers
+		t["efficiencyPlan"] = t["efficiencyPlan"].(int) + x.EfficiencyPlan
 	}
-	t["efficiency"] = Efficiency(t["interviewedCandidates"].(int), t["invitedCandidates"].(int))
+	t["efficiency"] = Efficiency(t["interviewedCandidates"].(int), t["efficiencyPlan"].(int))
 	return t
 }

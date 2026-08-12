@@ -8,9 +8,9 @@ import (
 )
 
 type exportSummaryRow struct {
-	Office                                                                  string
-	OpenVacancies, Invited, Interviewed, Interns, Reserve, Hired, Dismissed int
-	Responsible                                                             string
+	Office                                                                        string
+	OpenVacancies, Invited, Interviewed, Interns, Reserve, Hired, Dismissed, Plan int
+	Responsible                                                                   string
 }
 
 func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +23,8 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, err := a.db.Query(r.Context(), `WITH relevant_reports AS (
-		SELECT rp.*,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username) AS owner_name
+		SELECT rp.*,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username) AS owner_name,
+			COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id
 		WHERE rp.report_date BETWEEN $1 AND $2
@@ -54,6 +55,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		COALESCE(sum(rr.invited_candidates),0),
 		COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
 		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(hc.n),0),COALESCE(sum(rr.dismissed_workers),0),
+		COALESCE(sum(rp.efficiency_plan) FILTER (WHERE rr.id IS NOT NULL),0),
 		COALESCE(resp.responsible,'')
 	FROM office_scope o LEFT JOIN latest_vacancy lv ON lv.office_id=o.id
 	LEFT JOIN relevant_reports rp ON true
@@ -69,7 +71,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	rows := []exportSummaryRow{}
 	for q.Next() {
 		var x exportSummaryRow
-		if err = q.Scan(&x.Office, &x.OpenVacancies, &x.Invited, &x.Interviewed, &x.Interns, &x.Reserve, &x.Hired, &x.Dismissed, &x.Responsible); err != nil {
+		if err = q.Scan(&x.Office, &x.OpenVacancies, &x.Invited, &x.Interviewed, &x.Interns, &x.Reserve, &x.Hired, &x.Dismissed, &x.Plan, &x.Responsible); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -89,7 +91,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	}
 	total := exportSummaryRow{Office: "ИТОГО"}
 	for i, x := range rows {
-		values := []any{x.Office, x.OpenVacancies, x.Invited, x.Interviewed, x.Interns, x.Reserve, x.Hired, x.Dismissed, x.Responsible, Efficiency(x.Interviewed, x.Invited)}
+		values := []any{x.Office, x.OpenVacancies, x.Invited, x.Interviewed, x.Interns, x.Reserve, x.Hired, x.Dismissed, x.Responsible, Efficiency(x.Interviewed, x.Plan)}
 		for col, v := range values {
 			cell, _ := excelize.CoordinatesToCellName(col+1, i+2)
 			f.SetCellValue(summary, cell, v)
@@ -101,9 +103,10 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		total.Reserve += x.Reserve
 		total.Hired += x.Hired
 		total.Dismissed += x.Dismissed
+		total.Plan += x.Plan
 	}
 	totalRow := len(rows) + 2
-	values := []any{"ИТОГО:", total.OpenVacancies, total.Invited, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, "", Efficiency(total.Interviewed, total.Invited)}
+	values := []any{"ИТОГО:", total.OpenVacancies, total.Invited, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, "", Efficiency(total.Interviewed, total.Plan)}
 	for col, v := range values {
 		cell, _ := excelize.CoordinatesToCellName(col+1, totalRow)
 		f.SetCellValue(summary, cell, v)

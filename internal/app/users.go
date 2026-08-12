@@ -9,14 +9,18 @@ import (
 )
 
 type userRecord struct {
-	ID         string `json:"id"`
-	EmployeeID string `json:"employeeId"`
-	Username   string `json:"username"`
-	Role       string `json:"role"`
-	FirstName  string `json:"firstName"`
-	LastName   string `json:"lastName"`
-	MiddleName string `json:"middleName"`
-	Active     bool   `json:"active"`
+	ID           string `json:"id"`
+	EmployeeID   string `json:"employeeId"`
+	Username     string `json:"username"`
+	Role         string `json:"role"`
+	FirstName    string `json:"firstName"`
+	LastName     string `json:"lastName"`
+	MiddleName   string `json:"middleName"`
+	Active       bool   `json:"active"`
+	Plan         int    `json:"plan"`
+	PlanFrom     string `json:"planFrom"`
+	NextPlan     int    `json:"nextPlan"`
+	NextPlanFrom string `json:"nextPlanFrom"`
 }
 
 type userInput struct {
@@ -27,6 +31,8 @@ type userInput struct {
 	LastName   string `json:"lastName"`
 	MiddleName string `json:"middleName"`
 	Active     bool   `json:"active"`
+	Plan       int    `json:"plan"`
+	PlanFrom   string `json:"planFrom"`
 }
 
 func (a *App) users(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +45,11 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	if c.Role != "superadmin" || context == "report" {
 		roleFilter = "employee"
 	}
-	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active
+	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active,
+		COALESCE(p.plan_count,0),COALESCE(p.effective_from::text,''),COALESCE(np.plan_count,0),COALESCE(np.effective_from::text,'')
 		FROM users u JOIN employees e ON e.id=u.employee_id
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_efficiency_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) p ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_efficiency_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) np ON true
 		WHERE NOT u.system AND u.active AND ($1='' OR u.role=$1)
 		ORDER BY e.last_name,e.first_name`, roleFilter)
 	if err != nil {
@@ -51,7 +60,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	out := []userRecord{}
 	for q.Next() {
 		var x userRecord
-		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active); err != nil {
+		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -76,6 +85,14 @@ func validateUserInput(in userInput, creating bool) string {
 	}
 	if in.Password != "" && len(in.Password) < 8 {
 		return "Пароль должен содержать минимум 8 символов"
+	}
+	if creating && in.Role == "employee" {
+		if in.Plan < 0 {
+			return "План не может быть отрицательным"
+		}
+		if in.Plan > 0 && !validDate(in.PlanFrom) {
+			return "Укажите дату начала действия плана"
+		}
 	}
 	return ""
 }
@@ -118,12 +135,74 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "Такой логин уже используется")
 		return
 	}
+	if in.Role == "employee" && in.Plan > 0 {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO employee_efficiency_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)`, userID, in.Plan, in.PlanFrom); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
 	}
 	a.log(r.Context(), "user.created", "user", userID)
-	jsonOut(w, 201, userRecord{ID: userID, EmployeeID: employeeID, Username: strings.TrimSpace(in.Username), Role: in.Role, FirstName: strings.TrimSpace(in.FirstName), LastName: strings.TrimSpace(in.LastName), MiddleName: strings.TrimSpace(in.MiddleName), Active: true})
+	jsonOut(w, 201, userRecord{ID: userID, EmployeeID: employeeID, Username: strings.TrimSpace(in.Username), Role: in.Role, FirstName: strings.TrimSpace(in.FirstName), LastName: strings.TrimSpace(in.LastName), MiddleName: strings.TrimSpace(in.MiddleName), Active: true, Plan: in.Plan, PlanFrom: in.PlanFrom})
+}
+
+func (a *App) createUserPlan(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	var in struct {
+		Plan     int    `json:"plan"`
+		PlanFrom string `json:"planFrom"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Plan < 0 {
+		problem(w, 422, "План не может быть отрицательным")
+		return
+	}
+	if !validDate(in.PlanFrom) {
+		problem(w, 422, "Укажите корректную дату начала действия плана")
+		return
+	}
+	ctx := r.Context()
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var allowed bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='employee' AND active AND NOT system)`, r.PathValue("id")).Scan(&allowed); err != nil {
+		serverError(w, err)
+		return
+	}
+	if !allowed {
+		problem(w, 404, "Сотрудник не найден")
+		return
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO employee_efficiency_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)
+		ON CONFLICT(user_id,effective_from) DO UPDATE SET plan_count=EXCLUDED.plan_count`, r.PathValue("id"), in.Plan, in.PlanFrom)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	_, err = tx.Exec(ctx, `UPDATE report_rows rr SET efficiency=CASE WHEN $3>0 THEN round(rr.interviewed_candidates*100.0/$3,2) ELSE 0 END,updated_at=now()
+		FROM reports rp WHERE rp.id=rr.report_id AND rp.owner_user_id=$1 AND rp.report_date>=$2
+		AND NOT EXISTS (SELECT 1 FROM employee_efficiency_plans later WHERE later.user_id=$1 AND later.effective_from>$2 AND later.effective_from<=rp.report_date)`, r.PathValue("id"), in.PlanFrom, in.Plan)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	a.log(ctx, "user.plan.updated", "user", r.PathValue("id"))
+	jsonOut(w, 200, in)
 }
 
 func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {

@@ -8,13 +8,20 @@ import (
 
 func TestEfficiency(t *testing.T) {
 	tests := []struct {
-		interviewed, invited int
-		want                 float64
+		interviewed, plan int
+		want              float64
 	}{{0, 0, 0}, {3, 0, 0}, {4, 8, 50}, {3, 16, 18.75}}
 	for _, tt := range tests {
-		if got := Efficiency(tt.interviewed, tt.invited); got != tt.want {
-			t.Fatalf("Efficiency(%d,%d)=%v, want %v", tt.interviewed, tt.invited, got, tt.want)
+		if got := Efficiency(tt.interviewed, tt.plan); got != tt.want {
+			t.Fatalf("Efficiency(%d,%d)=%v, want %v", tt.interviewed, tt.plan, got, tt.want)
 		}
+	}
+}
+
+func TestEmployeeCanBeCreatedWithoutPlan(t *testing.T) {
+	in := userInput{Username: "employee", Password: "password", Role: "employee", FirstName: "Иван", LastName: "Иванов"}
+	if got := validateUserInput(in, true); got != "" {
+		t.Fatalf("employee without plan rejected: %s", got)
 	}
 }
 

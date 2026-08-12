@@ -53,7 +53,7 @@ func (a *App) exportReports(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Некорректная дата окончания")
 		return
 	}
-	q, err := a.db.Query(r.Context(), `SELECT rp.report_date::text,o.name,rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,count(DISTINCT hw.id),rr.dismissed_workers,COALESCE(string_agg(DISTINCT concat_ws(' ',e.last_name,e.first_name,e.middle_name),', '),''),rr.efficiency FROM reports rp JOIN report_rows rr ON rr.report_id=rp.id JOIN offices o ON o.id=rr.office_id LEFT JOIN hired_workers hw ON hw.report_row_id=rr.id LEFT JOIN report_row_responsibles re ON re.report_row_id=rr.id LEFT JOIN employees e ON e.id=re.employee_id WHERE rp.report_date BETWEEN $1 AND $2 GROUP BY rp.report_date,o.id,o.name,o.sort_order,rr.id ORDER BY rp.report_date,o.sort_order`, from, to)
+	q, err := a.db.Query(r.Context(), `SELECT to_char(rp.report_date,'DD.MM.YYYY'),o.name,rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,count(DISTINCT hw.id),rr.dismissed_workers,COALESCE(string_agg(DISTINCT concat_ws(' ',e.last_name,e.first_name,e.middle_name),', '),''),rr.efficiency FROM reports rp JOIN report_rows rr ON rr.report_id=rp.id JOIN offices o ON o.id=rr.office_id LEFT JOIN hired_workers hw ON hw.report_row_id=rr.id LEFT JOIN report_row_responsibles re ON re.report_row_id=rr.id LEFT JOIN employees e ON e.id=re.employee_id WHERE rp.report_date BETWEEN $1 AND $2 GROUP BY rp.report_date,o.id,o.name,o.sort_order,rr.id ORDER BY rp.report_date,o.sort_order`, from, to)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -171,7 +171,9 @@ type office struct {
 }
 
 func (a *App) offices(w http.ResponseWriter, r *http.Request) {
-	if _,ok:=requireManager(w,r);!ok{return}
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
 	q, err := a.db.Query(r.Context(), `SELECT id,name,sort_order,active FROM offices ORDER BY sort_order,name`)
 	if err != nil {
 		serverError(w, err)
@@ -187,7 +189,9 @@ func (a *App) offices(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, out)
 }
 func (a *App) createOffice(w http.ResponseWriter, r *http.Request) {
-	if _,ok:=requireManager(w,r);!ok{return}
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
 	var o office
 	if !decode(w, r, &o) {
 		return
@@ -206,7 +210,9 @@ func (a *App) createOffice(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 201, o)
 }
 func (a *App) updateOffice(w http.ResponseWriter, r *http.Request) {
-	if _,ok:=requireManager(w,r);!ok{return}
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
 	var o office
 	if !decode(w, r, &o) {
 		return

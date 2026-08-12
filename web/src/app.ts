@@ -21,7 +21,6 @@ const icons={
   employees:icon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'),
   offices:icon('<path d="M3 21h18M5 21V7l7-4 7 4v14M9 10h.01M15 10h.01M9 14h.01M15 14h.01M10 21v-3h4v3"/>'),
   imports:icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>'),
-  settings:icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21h-4v-.08A1.7 1.7 0 0 0 9 19.37a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15a1.7 1.7 0 0 0-1.55-1H3v-4h.08A1.7 1.7 0 0 0 4.63 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63a1.7 1.7 0 0 0 1-1.55V3h4v.08A1.7 1.7 0 0 0 15 4.63a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9a1.7 1.7 0 0 0 1.55 1H21v4h-.08A1.7 1.7 0 0 0 19.4 15z"/>'),
   audit:icon('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),
   left:icon('<path d="m15 18-6-6 6-6"/>'),right:icon('<path d="m9 18 6-6-6-6"/>'),
   columns:icon('<path d="M4 4h16v16H4zM9 4v16M15 4v16"/>'),reset:icon('<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/>'),
@@ -92,7 +91,7 @@ function manager(){return currentUser?.role==='admin'||currentUser?.role==='supe
 async function loadReport(){setHeader(manager()?'Сводный отчёт':'Мой ежедневный отчёт',manager()?'Суммарные показатели сотрудников':'Заполнение персональных показателей');rememberScroll();if(manager()){adminUsers=await api<User[]>(`/api/users?context=report&date=${encodeURIComponent(reportDate)}`);if(selectedEmployee&&!adminUsers.some(user=>user.id===selectedEmployee))selectedEmployee=''}const filter=manager()&&selectedEmployee?`&employeeId=${encodeURIComponent(selectedEmployee)}`:'';report=await api(`/api/bootstrap?date=${reportDate}${filter}`);renderReport()}
 function reportEmployeeOptions(){const option=(u:User)=>`<option value="${u.id}" ${u.id===selectedEmployee?'selected':''}>${esc([u.lastName,u.firstName,u.middleName].filter(Boolean).join(' '))}</option>`;return `<option value="">Все сотрудники</option>${adminUsers.map(option).join('')}`}
 function colClass(_id:string){return ''}
-function defaultTableWidth(){const natural=Object.values(defaultColumnWidths).reduce((sum,width)=>sum+width,0);return Math.max(allColumns.length*80,Math.min(natural,content.clientWidth-24))}
+function defaultTableWidth(){return Math.max(allColumns.length*80,Math.min(1470,content.clientWidth-24))}
 function defaultColWidth(id:string){const index=allColumns.findIndex(([column])=>column===id),natural=Object.values(defaultColumnWidths).reduce((sum,width)=>sum+width,0),target=defaultTableWidth();if(index<0)return 125;const before=allColumns.slice(0,index).reduce((sum,[column])=>sum+(defaultColumnWidths[column]||125),0),after=before+(defaultColumnWidths[id]||125);return Math.round(after*target/natural)-Math.round(before*target/natural)}
 function colWidth(id:string){return columnWidths[id]??defaultColWidth(id)}
 function tableWidth(){return allColumns.reduce((width,[id])=>width+colWidth(id),0)}

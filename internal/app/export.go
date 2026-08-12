@@ -188,7 +188,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	_ = f.SetPanes(peopleSheet, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})
 	_ = f.AutoFilter(peopleSheet, "A1:E1", nil)
 
-	peopleRows, err := a.db.Query(r.Context(), `SELECT rp.report_date::text,
+	peopleRows, err := a.db.Query(r.Context(), `SELECT to_char(rp.report_date,'DD.MM.YYYY'),
 		COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),p.category,p.full_name,
 		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM report_row_people p

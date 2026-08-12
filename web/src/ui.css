@@ -38,6 +38,7 @@ input[type=number]{appearance:textfield;-moz-appearance:textfield}input[type=num
 .with-icon{display:inline-flex;align-items:center;gap:5px}.with-icon svg{width:14px;height:14px}
 .status-pill{height:24px;display:inline-flex;align-items:center;padding:0 8px;border-radius:12px;font-size:10px;font-weight:600;white-space:nowrap}.status-pill.draft{background:var(--warning-bg);color:var(--warning)}.status-pill.completed{background:var(--success-bg);color:var(--success)}
 .norm{height:34px;display:inline-flex;align-items:center;padding:0 10px;border-radius:4px;background:var(--warning-bg);color:var(--warning);font-size:14px;font-weight:600;white-space:nowrap}.norm.ok{background:var(--success-bg);color:var(--success)}
+.plan-summary{height:34px;display:inline-flex;align-items:center;gap:4px;padding:0 11px;border:1px solid #c9d9ee;border-radius:5px;background:#f2f7fd;color:#52657b;font-size:13px;white-space:nowrap}.plan-summary b{color:#174f97;font-size:15px}
 .save-state{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:13px;white-space:nowrap}.save-state:before{content:"";width:8px;height:8px;border-radius:50%;background:#94a3b8}.save-state.saving:before{background:#f59e0b;animation:pulse 1s infinite}.save-state.saved:before{background:#22a559}.save-state.failed{color:var(--danger)}.save-state.failed:before{background:var(--danger)}@keyframes pulse{50%{opacity:.3}}
 
 /* Report workspace */

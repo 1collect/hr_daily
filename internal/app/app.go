@@ -179,14 +179,19 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		rows, err := a.loadAggregateRows(ctx, date, employeeID)
+		plan, err := a.efficiencyPlanTotal(ctx, date, employeeID)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		rows, err := a.loadAggregateRows(ctx, date, employeeID, plan)
 		if err != nil {
 			serverError(w, err)
 			return
 		}
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
-		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "totals": totals(rows)})
+		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
 		return
 	}
 	var reportID, status string
@@ -213,8 +218,25 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	plan, err := a.efficiencyPlanTotal(ctx, date, claims.UserID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	editable := status == "draft" && a.hasReportEditAccess(ctx, claims.UserID, date)
-	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": status, "editable": editable}, "rows": rows, "totals": totals(rows)})
+	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": status, "editable": editable}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
+}
+
+func (a *App) efficiencyPlanTotal(ctx context.Context, date, ownerID string) (int, error) {
+	var plan int
+	err := a.db.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE((
+		SELECT p.plan_count FROM employee_efficiency_plans p
+		WHERE p.user_id=u.id AND p.effective_from<=$1::date
+		ORDER BY p.effective_from DESC LIMIT 1
+	),0)),0)::int
+	FROM users u
+	WHERE u.role='employee' AND u.active AND NOT u.system AND ($2='' OR u.id::text=$2)`, date, ownerID).Scan(&plan)
+	return plan, err
 }
 
 func (a *App) applySharedVacancies(ctx context.Context, date string, rows []reportRow) error {
@@ -246,10 +268,9 @@ func localToday() string {
 	return time.Now().In(loc).Format("2006-01-02")
 }
 
-func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]reportRow, error) {
+func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan int) ([]reportRow, error) {
 	q, err := a.db.Query(ctx, `WITH relevant_reports AS (
-		SELECT rp.*,COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
-		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
+		SELECT rp.* FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
 	), office_scope AS (
 		SELECT o.id,
@@ -260,8 +281,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 		SELECT o.id,o.name,o.sort_order,
 		COALESCE(ds.open_vacancies,0),COALESCE(sum(rr.invited_candidates),0),
 		COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
-		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hc.n),0),
-		COALESCE(sum(rp.efficiency_plan) FILTER (WHERE rr.id IS NOT NULL),0)
+		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hc.n),0)
 		FROM office_scope o
 		LEFT JOIN relevant_reports rp ON true
 		LEFT JOIN report_rows rr ON rr.office_id=o.id AND rr.report_id=rp.id
@@ -276,9 +296,10 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string) ([]re
 	for q.Next() {
 		var x reportRow
 		var hires int
-		if err = q.Scan(&x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &hires, &x.EfficiencyPlan); err != nil {
+		if err = q.Scan(&x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &hires); err != nil {
 			return nil, err
 		}
+		x.EfficiencyPlan = plan
 		x.Efficiency = Efficiency(x.InterviewedCandidates, x.EfficiencyPlan)
 		x.HiredWorkers = make([]string, hires)
 		x.HiredDetails = []hiredDetail{}
@@ -618,8 +639,8 @@ func (a *App) completeReport(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, map[string]string{"status": "completed"})
 }
 
-func totals(rows []reportRow) map[string]any {
-	t := map[string]any{"openVacancies": 0, "invitedCandidates": 0, "interviewedCandidates": 0, "interns": 0, "reserveCandidates": 0, "hiredWorkers": 0, "dismissedWorkers": 0, "efficiencyPlan": 0}
+func totals(rows []reportRow, plan int) map[string]any {
+	t := map[string]any{"openVacancies": 0, "invitedCandidates": 0, "interviewedCandidates": 0, "interns": 0, "reserveCandidates": 0, "hiredWorkers": 0, "dismissedWorkers": 0, "efficiencyPlan": plan}
 	for _, x := range rows {
 		t["openVacancies"] = t["openVacancies"].(int) + x.OpenVacancies
 		t["invitedCandidates"] = t["invitedCandidates"].(int) + x.InvitedCandidates
@@ -628,8 +649,7 @@ func totals(rows []reportRow) map[string]any {
 		t["reserveCandidates"] = t["reserveCandidates"].(int) + x.ReserveCandidates
 		t["hiredWorkers"] = t["hiredWorkers"].(int) + len(x.HiredWorkers)
 		t["dismissedWorkers"] = t["dismissedWorkers"].(int) + x.DismissedWorkers
-		t["efficiencyPlan"] = t["efficiencyPlan"].(int) + x.EfficiencyPlan
 	}
-	t["efficiency"] = Efficiency(t["interviewedCandidates"].(int), t["efficiencyPlan"].(int))
+	t["efficiency"] = Efficiency(t["interviewedCandidates"].(int), plan)
 	return t
 }

@@ -25,6 +25,14 @@ func TestEmployeeCanBeCreatedWithoutPlan(t *testing.T) {
 	}
 }
 
+func TestTotalsUsesPlanOnce(t *testing.T) {
+	rows := []reportRow{{InterviewedCandidates: 2, EfficiencyPlan: 10}, {InterviewedCandidates: 3, EfficiencyPlan: 10}}
+	got := totals(rows, 10)
+	if got["efficiencyPlan"] != 10 || got["efficiency"] != 50.0 {
+		t.Fatalf("unexpected totals: %#v", got)
+	}
+}
+
 func TestCleanPeople(t *testing.T) {
 	got := cleanPeople(map[string][]string{
 		"invited_candidates": {"  Иванов Иван  ", " ", "Петров Пётр"},

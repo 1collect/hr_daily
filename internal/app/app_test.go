@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/xuri/excelize/v2"
 )
 
 func TestEfficiency(t *testing.T) {
@@ -30,6 +32,23 @@ func TestTotalsUsesPlanOnce(t *testing.T) {
 	got := totals(rows, 10)
 	if got["efficiencyPlan"] != 10 || got["efficiency"] != 50.0 {
 		t.Fatalf("unexpected totals: %#v", got)
+	}
+}
+
+func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "РП")
+	rows := []exportSummaryRow{
+		{Office: "РП 1", Interviewed: 3, Plan: 10, TotalPlan: 10},
+		{Office: "РП 2", Interviewed: 2, Plan: 10, TotalPlan: 10},
+	}
+	writeExportSummarySheet(f, exportKinds["rp"], rows, nil, newExportStyles(f))
+	got, err := f.GetCellValue("РП", "J4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "50" {
+		t.Fatalf("export total efficiency=%q, want 50", got)
 	}
 }
 

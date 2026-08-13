@@ -132,7 +132,9 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
-		x.Responsible = employeeName
+		if x.Invited > 0 || x.Interviewed > 0 || x.Interns > 0 || x.Reserve > 0 || x.Hired > 0 || x.Dismissed > 0 {
+			x.Responsible = employeeName
+		}
 		index, exists := sectionIndexes[employeeID]
 		if !exists {
 			index = len(sections)
@@ -229,7 +231,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 			f.SetCellStyle(summary, fmt.Sprintf("A%d", headerRow+1), fmt.Sprintf("J%d", lastDataRow), bodyStyle)
 		}
 		employeeTotalRow := lastDataRow + 1
-		values := []any{"ИТОГО:", employeeTotal.OpenVacancies, employeeTotal.Invited, employeeTotal.Interviewed, employeeTotal.Interns, employeeTotal.Reserve, employeeTotal.Hired, employeeTotal.Dismissed, section.Name, Efficiency(employeeTotal.Interviewed, employeeTotal.Plan)}
+		values := []any{"ИТОГО:", employeeTotal.OpenVacancies, employeeTotal.Invited, employeeTotal.Interviewed, employeeTotal.Interns, employeeTotal.Reserve, employeeTotal.Hired, employeeTotal.Dismissed, "", Efficiency(employeeTotal.Interviewed, employeeTotal.Plan)}
 		for col, value := range values {
 			cell, _ := excelize.CoordinatesToCellName(col+1, employeeTotalRow)
 			f.SetCellValue(summary, cell, value)

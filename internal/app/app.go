@@ -112,6 +112,9 @@ func (a *App) staticFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Frontend assets keep stable names (app.js, ui.css), so caching them can
+	// leave a browser running an older UI against a newer API after deployment.
+	w.Header().Set("Cache-Control", "no-store")
 	p := filepath.Join(a.static, filepath.Clean(r.URL.Path))
 	if r.URL.Path == "/" {
 		p = filepath.Join(a.static, "index.html")

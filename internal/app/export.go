@@ -29,7 +29,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	}
 	q, err := a.db.Query(r.Context(), `WITH relevant_reports AS (
 		SELECT rp.*,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username) AS owner_name,
-			COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
+			COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id
 		WHERE rp.report_date BETWEEN $1 AND $2
@@ -90,7 +90,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 
 	employeeRows, err := a.db.Query(r.Context(), `WITH relevant_reports AS (
 		SELECT rp.*,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username) AS owner_name,
-			COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
+			COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS efficiency_plan
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id
 		WHERE rp.report_date BETWEEN $1 AND $2
@@ -197,7 +197,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	}
 	nextRow := totalRow + 2
 	for _, section := range sections {
-		f.SetCellValue(summary, fmt.Sprintf("A%d", nextRow), "ФИО сотрудника: "+section.Name)
+		f.SetCellValue(summary, fmt.Sprintf("A%d", nextRow), section.Name)
 		_ = f.MergeCell(summary, fmt.Sprintf("A%d", nextRow), fmt.Sprintf("J%d", nextRow))
 		f.SetCellStyle(summary, fmt.Sprintf("A%d", nextRow), fmt.Sprintf("J%d", nextRow), employeeTitleStyle)
 		f.SetRowHeight(summary, nextRow, 24)

@@ -189,11 +189,9 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) mainOfficeEfficiencyPlanTotal(ctx context.Context, date, ownerID string) (int, error) {
 	var plan int
-	err := a.db.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE((
-		SELECT p.plan_count FROM main_office_employee_efficiency_plans p
-		WHERE p.user_id=u.id AND p.effective_from<=$1::date
-		ORDER BY p.effective_from DESC LIMIT 1
-	),0)),0)::int FROM users u
+	err := a.db.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE(
+		(SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=u.id AND d.report_date=$1::date AND d.report_type='main_office'),
+		(SELECT p.plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=u.id AND p.effective_from<=$1::date ORDER BY p.effective_from DESC LIMIT 1),0)),0)::int FROM users u
 	WHERE u.role='employee' AND u.active AND NOT u.system AND ($2='' OR u.id::text=$2)`, date, ownerID).Scan(&plan)
 	return plan, err
 }
@@ -293,7 +291,7 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	for index := range rows {
 		byOffice[rows[index].OfficeID] = &rows[index]
 	}
-	contributions, err := a.db.Query(ctx, `SELECT rr.main_office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,(SELECT count(*) FROM main_office_hired_workers h WHERE h.report_row_id=rr.id),COALESCE((SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+	contributions, err := a.db.Query(ctx, `SELECT rr.main_office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,(SELECT count(*) FROM main_office_hired_workers h WHERE h.report_row_id=rr.id),COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system JOIN main_office_report_rows rr ON rr.report_id=rp.id
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2) ORDER BY rp.owner_name_snapshot`, date, ownerID)
 	if err != nil {
@@ -408,7 +406,7 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(ctx)
 	var mainOfficeID, reportDate string
 	var plan int
-	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text,COALESCE((SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &plan)
+	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text,COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &plan)
 	if err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return

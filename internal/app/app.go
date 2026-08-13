@@ -86,6 +86,8 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("DELETE /api/users/{id}/main-office-plans/{date}", a.deleteFutureMainOfficeUserPlan)
 	m.HandleFunc("DELETE /api/users/{id}", a.deleteUser)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
+	m.HandleFunc("GET /api/daily-plans", a.dailyPlans)
+	m.HandleFunc("PUT /api/daily-plans", a.updateDailyPlans)
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
 	m.HandleFunc("POST /api/report-access", a.openReportAccess)
 	m.HandleFunc("DELETE /api/report-access", a.closeReportAccess)
@@ -241,11 +243,9 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) efficiencyPlanTotal(ctx context.Context, date, ownerID string) (int, error) {
 	var plan int
-	err := a.db.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE((
-		SELECT p.plan_count FROM employee_efficiency_plans p
-		WHERE p.user_id=u.id AND p.effective_from<=$1::date
-		ORDER BY p.effective_from DESC LIMIT 1
-	),0)),0)::int
+	err := a.db.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE(
+		(SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=u.id AND d.report_date=$1::date AND d.report_type='rp'),
+		(SELECT p.plan_count FROM employee_efficiency_plans p WHERE p.user_id=u.id AND p.effective_from<=$1::date ORDER BY p.effective_from DESC LIMIT 1),0)),0)::int
 	FROM users u
 	WHERE u.role='employee' AND u.active AND NOT u.system AND ($2='' OR u.id::text=$2)`, date, ownerID).Scan(&plan)
 	return plan, err
@@ -330,7 +330,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	details, err := a.db.Query(ctx, `WITH hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
 		SELECT rr.office_id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username),
 		rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,
-		COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
+		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
 		COALESCE(hc.n,0),rr.dismissed_workers
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
@@ -431,7 +431,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 
 func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error) {
 	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency,
-		COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id JOIN offices o ON o.id=rr.office_id WHERE rr.report_id=$1 ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),COALESCE(NULLIF(rr.office_name_snapshot,''),o.name)`, reportID)
 	if err != nil {
 		return nil, err
@@ -532,7 +532,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 	var officeID, reportDate string
 	var plan int
 	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text,
-		COALESCE((SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
 		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate, &plan); err != nil {

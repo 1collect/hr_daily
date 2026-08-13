@@ -213,7 +213,8 @@ func (a *App) createUserPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = tx.Exec(ctx, `UPDATE report_rows rr SET efficiency=CASE WHEN $3>0 THEN round(rr.interviewed_candidates*100.0/$3,2) ELSE 0 END,updated_at=now()
 		FROM reports rp WHERE rp.id=rr.report_id AND rp.owner_user_id=$1 AND rp.report_date>=$2
-		AND NOT EXISTS (SELECT 1 FROM employee_efficiency_plans later WHERE later.user_id=$1 AND later.effective_from>$2 AND later.effective_from<=rp.report_date)`, r.PathValue("id"), in.PlanFrom, in.Plan)
+		AND NOT EXISTS (SELECT 1 FROM employee_efficiency_plans later WHERE later.user_id=$1 AND later.effective_from>$2 AND later.effective_from<=rp.report_date)
+		AND NOT EXISTS (SELECT 1 FROM daily_efficiency_plan_overrides daily WHERE daily.user_id=$1 AND daily.report_date=rp.report_date AND daily.report_type='rp')`, r.PathValue("id"), in.PlanFrom, in.Plan)
 	if err != nil {
 		serverError(w, err)
 		return

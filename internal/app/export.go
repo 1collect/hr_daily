@@ -25,7 +25,7 @@ type exportKindConfig struct {
 }
 
 type exportStyles struct {
-	header, body, total, employeeTitle int
+	header, body, total, employeeTitle, efficiencyBody, efficiencyTotal int
 }
 
 var exportKinds = map[string]exportKindConfig{
@@ -203,11 +203,13 @@ func newExportStyles(f *excelize.File) exportStyles {
 	body, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11}, Border: borders})
 	total, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11, Bold: true}, Border: borders})
 	title, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 13, Bold: true}, Alignment: &excelize.Alignment{Vertical: "center"}})
-	return exportStyles{header: header, body: body, total: total, employeeTitle: title}
+	efficiencyBody, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11}, Border: borders, NumFmt: 2})
+	efficiencyTotal, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "Calibri", Size: 11, Bold: true}, Border: borders, NumFmt: 2})
+	return exportStyles{header: header, body: body, total: total, employeeTitle: title, efficiencyBody: efficiencyBody, efficiencyTotal: efficiencyTotal}
 }
 
 func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exportSummaryRow, sections []employeeExportSection, styles exportStyles) {
-	headers := []string{kind.Unit, "Количество открытых вакансий", "Количество приглашенных кандидатов", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Количество кандидатов в резерве", "Количество принятых работников", "Количество уволенных работников", "Ответственный работник", "Эффективность работников"}
+	headers := []string{kind.Unit, "Количество открытых вакансий", "Количество приглашенных кандидатов", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Количество кандидатов в резерве", "Количество принятых работников", "Количество уволенных работников", "Ответственный работник", "Эффективность работников, %"}
 	writeTable := func(startRow int, tableRows []exportSummaryRow, responsibleTotal string) int {
 		for column, header := range headers {
 			cell, _ := excelize.CoordinatesToCellName(column+1, startRow)
@@ -236,6 +238,7 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 		}
 		if len(tableRows) > 0 {
 			f.SetCellStyle(kind.Sheet, fmt.Sprintf("A%d", startRow+1), fmt.Sprintf("J%d", startRow+len(tableRows)), styles.body)
+			f.SetCellStyle(kind.Sheet, fmt.Sprintf("J%d", startRow+1), fmt.Sprintf("J%d", startRow+len(tableRows)), styles.efficiencyBody)
 		}
 		totalRow := startRow + len(tableRows) + 1
 		values := []any{"ИТОГО:", total.OpenVacancies, total.Invited, total.Interviewed, total.Interns, total.Reserve, total.Hired, total.Dismissed, responsibleTotal, Efficiency(total.Interviewed, total.TotalPlan)}
@@ -244,6 +247,7 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 			f.SetCellValue(kind.Sheet, cell, value)
 		}
 		f.SetCellStyle(kind.Sheet, fmt.Sprintf("A%d", totalRow), fmt.Sprintf("J%d", totalRow), styles.total)
+		f.SetCellStyle(kind.Sheet, fmt.Sprintf("J%d", totalRow), fmt.Sprintf("J%d", totalRow), styles.efficiencyTotal)
 		return totalRow
 	}
 

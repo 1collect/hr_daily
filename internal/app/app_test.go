@@ -64,8 +64,8 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "50" {
-		t.Fatalf("export total efficiency=%q, want 50", got)
+	if got != "50.00" {
+		t.Fatalf("export total efficiency=%q, want 50.00", got)
 	}
 }
 

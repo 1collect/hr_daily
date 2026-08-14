@@ -197,7 +197,7 @@ func (a *App) mainOfficeEfficiencyPlanTotal(ctx context.Context, date, ownerID s
 }
 
 func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]reportRow, error) {
-	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.main_office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.main_office_sort_order_snapshot,0),o.sort_order),COALESCE(ds.open_vacancies,0),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers
+	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.main_office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.main_office_sort_order_snapshot,0),o.sort_order),COALESCE(ds.open_vacancies,0),COALESCE(ds.planned_reserve,0),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers
 		FROM main_office_report_rows rr JOIN main_offices o ON o.id=rr.main_office_id
 		LEFT JOIN main_office_daily_shared ds ON ds.report_date=$2 AND ds.main_office_id=o.id
 		WHERE rr.report_id=$1 ORDER BY COALESCE(NULLIF(rr.main_office_sort_order_snapshot,0),o.sort_order),COALESCE(NULLIF(rr.main_office_name_snapshot,''),o.name)`, reportID, date)
@@ -208,7 +208,7 @@ func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]
 	rows := []reportRow{}
 	for q.Next() {
 		var row reportRow
-		if err = q.Scan(&row.ID, &row.OfficeID, &row.OfficeName, &row.SortOrder, &row.OpenVacancies, &row.InvitedCandidates, &row.InterviewedCandidates, &row.Interns, &row.ReserveCandidates, &row.DismissedWorkers); err != nil {
+		if err = q.Scan(&row.ID, &row.OfficeID, &row.OfficeName, &row.SortOrder, &row.OpenVacancies, &row.PlannedReserve, &row.InvitedCandidates, &row.InterviewedCandidates, &row.Interns, &row.ReserveCandidates, &row.DismissedWorkers); err != nil {
 			return nil, err
 		}
 		row.HiredWorkers = []hiredWorker{}
@@ -260,10 +260,10 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 		FROM main_offices o WHERE o.active OR EXISTS(
 			SELECT 1 FROM main_office_report_rows rr JOIN relevant_reports rp ON rp.id=rr.report_id WHERE rr.main_office_id=o.id)
 	), hired AS (SELECT report_row_id,count(*) AS n FROM main_office_hired_workers GROUP BY report_row_id)
-	SELECT o.id,o.name,o.sort_order,COALESCE(ds.open_vacancies,0),COALESCE(sum(rr.invited_candidates),0),COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hired.n),0)
+	SELECT o.id,o.name,o.sort_order,COALESCE(ds.open_vacancies,0),COALESCE(ds.planned_reserve,0),COALESCE(sum(rr.invited_candidates),0),COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hired.n),0)
 	FROM scope o LEFT JOIN relevant_reports rp ON true LEFT JOIN main_office_report_rows rr ON rr.report_id=rp.id AND rr.main_office_id=o.id
 	LEFT JOIN hired ON hired.report_row_id=rr.id LEFT JOIN main_office_daily_shared ds ON ds.report_date=$1 AND ds.main_office_id=o.id
-	GROUP BY o.id,o.name,o.sort_order,ds.open_vacancies ORDER BY o.sort_order,o.name`, date, ownerID)
+	GROUP BY o.id,o.name,o.sort_order,ds.open_vacancies,ds.planned_reserve ORDER BY o.sort_order,o.name`, date, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	for q.Next() {
 		var row reportRow
 		var hired int
-		if err = q.Scan(&row.OfficeID, &row.OfficeName, &row.SortOrder, &row.OpenVacancies, &row.InvitedCandidates, &row.InterviewedCandidates, &row.Interns, &row.ReserveCandidates, &row.DismissedWorkers, &hired); err != nil {
+		if err = q.Scan(&row.OfficeID, &row.OfficeName, &row.SortOrder, &row.OpenVacancies, &row.PlannedReserve, &row.InvitedCandidates, &row.InterviewedCandidates, &row.Interns, &row.ReserveCandidates, &row.DismissedWorkers, &hired); err != nil {
 			return nil, err
 		}
 		row.HiredWorkers = make([]hiredWorker, hired)
@@ -316,19 +316,20 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	if err = a.loadMainOfficeAggregateDetails(ctx, date, ownerID, byOffice); err != nil {
 		return nil, err
 	}
-	shared, err := a.db.Query(ctx, `SELECT ds.main_office_id,COALESCE(NULLIF(ds.updated_by_name_snapshot,''),u.username,'Общее значение'),ds.open_vacancies FROM main_office_daily_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id WHERE ds.report_date=$1`, date)
+	shared, err := a.db.Query(ctx, `SELECT ds.main_office_id,COALESCE(NULLIF(ds.updated_by_name_snapshot,''),u.username,'Общее значение'),ds.open_vacancies,ds.planned_reserve FROM main_office_daily_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id WHERE ds.report_date=$1`, date)
 	if err != nil {
 		return nil, err
 	}
 	defer shared.Close()
 	for shared.Next() {
 		var officeID, name string
-		var value int
-		if err = shared.Scan(&officeID, &name, &value); err != nil {
+		var openVacancies, plannedReserve int
+		if err = shared.Scan(&officeID, &name, &openVacancies, &plannedReserve); err != nil {
 			return nil, err
 		}
 		if row := byOffice[officeID]; row != nil {
-			row.Contributions["openVacancies"] = []cellContribution{{Name: name, Value: float64(value)}}
+			row.Contributions["openVacancies"] = []cellContribution{{Name: name, Value: float64(openVacancies)}}
+			row.Contributions["plannedReserve"] = []cellContribution{{Name: name, Value: float64(plannedReserve)}}
 		}
 	}
 	return rows, shared.Err()
@@ -411,7 +412,7 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO main_office_daily_shared(report_date,main_office_id,open_vacancies,updated_by_user_id,updated_by_name_snapshot) SELECT $1,$2,$3,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username) FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$4 ON CONFLICT(report_date,main_office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`, reportDate, mainOfficeID, input.OpenVacancies, claims.UserID)
+	_, err = tx.Exec(ctx, `INSERT INTO main_office_daily_shared(report_date,main_office_id,open_vacancies,planned_reserve,updated_by_user_id,updated_by_name_snapshot) SELECT $1,$2,$3,$4,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username) FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$5 ON CONFLICT(report_date,main_office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,planned_reserve=EXCLUDED.planned_reserve,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`, reportDate, mainOfficeID, input.OpenVacancies, input.PlannedReserve, claims.UserID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -420,13 +421,6 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		serverError(w, err)
 		return
-	}
-	_, _ = tx.Exec(ctx, `DELETE FROM main_office_hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
-	for _, worker := range cleanHiredWorkers(input.HiredWorkers) {
-		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
-			serverError(w, err)
-			return
-		}
 	}
 	for category, names := range input.People {
 		if _, err = tx.Exec(ctx, `DELETE FROM main_office_report_row_people WHERE report_row_id=$1 AND category=$2`, r.PathValue("id"), category); err != nil {
@@ -446,5 +440,6 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log(ctx, "main_office_report_row.updated", "main_office_report_row", r.PathValue("id"))
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "openVacancies", "value": input.OpenVacancies, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan), "hiredCount": len(cleanHiredWorkers(input.HiredWorkers))})
+	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "plannedReserve", "value": input.PlannedReserve, "updatedBy": claims.Username})
+	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan)})
 }

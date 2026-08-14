@@ -20,6 +20,23 @@ func TestEfficiency(t *testing.T) {
 	}
 }
 
+func TestCleanHiredWorkersKeepsOptionalPosition(t *testing.T) {
+	got := cleanHiredWorkers([]hiredWorker{
+		{FullName: "  Иванов Иван  ", Position: "  Бухгалтер  "},
+		{FullName: "   ", Position: "Не должна сохраниться"},
+		{FullName: "Петров Пётр", Position: "   "},
+	})
+	if len(got) != 2 {
+		t.Fatalf("got %d workers, want 2", len(got))
+	}
+	if got[0].FullName != "Иванов Иван" || got[0].Position != "Бухгалтер" {
+		t.Fatalf("unexpected first worker: %#v", got[0])
+	}
+	if got[1].Position != "" {
+		t.Fatalf("optional empty position was not normalized: %#v", got[1])
+	}
+}
+
 func TestEmployeeCanBeCreatedWithoutPlan(t *testing.T) {
 	in := userInput{Username: "employee", Password: "password", Role: "employee", FirstName: "Иван", LastName: "Иванов"}
 	if got := validateUserInput(in, true); got != "" {

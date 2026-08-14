@@ -211,7 +211,7 @@ func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]
 		if err = q.Scan(&row.ID, &row.OfficeID, &row.OfficeName, &row.SortOrder, &row.OpenVacancies, &row.InvitedCandidates, &row.InterviewedCandidates, &row.Interns, &row.ReserveCandidates, &row.DismissedWorkers); err != nil {
 			return nil, err
 		}
-		row.HiredWorkers = []string{}
+		row.HiredWorkers = []hiredWorker{}
 		row.People = map[string][]string{}
 		rows = append(rows, row)
 	}
@@ -219,17 +219,17 @@ func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]
 		return nil, err
 	}
 	for index := range rows {
-		hired, queryErr := a.db.Query(ctx, `SELECT full_name FROM main_office_hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, rows[index].ID)
+		hired, queryErr := a.db.Query(ctx, `SELECT full_name,position FROM main_office_hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, rows[index].ID)
 		if queryErr != nil {
 			return nil, queryErr
 		}
 		for hired.Next() {
-			var name string
-			if err = hired.Scan(&name); err != nil {
+			var worker hiredWorker
+			if err = hired.Scan(&worker.FullName, &worker.Position); err != nil {
 				hired.Close()
 				return nil, err
 			}
-			rows[index].HiredWorkers = append(rows[index].HiredWorkers, name)
+			rows[index].HiredWorkers = append(rows[index].HiredWorkers, worker)
 		}
 		hired.Close()
 		people, queryErr := a.db.Query(ctx, `SELECT category,full_name FROM main_office_report_row_people WHERE report_row_id=$1 ORDER BY category,created_at,id`, rows[index].ID)
@@ -275,7 +275,7 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 		if err = q.Scan(&row.OfficeID, &row.OfficeName, &row.SortOrder, &row.OpenVacancies, &row.InvitedCandidates, &row.InterviewedCandidates, &row.Interns, &row.ReserveCandidates, &row.DismissedWorkers, &hired); err != nil {
 			return nil, err
 		}
-		row.HiredWorkers = make([]string, hired)
+		row.HiredWorkers = make([]hiredWorker, hired)
 		row.HiredDetails = []hiredDetail{}
 		row.People = map[string][]string{}
 		row.PeopleDetails = map[string][]hiredDetail{}
@@ -335,18 +335,18 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 }
 
 func (a *App) loadMainOfficeAggregateDetails(ctx context.Context, date, ownerID string, rows map[string]*reportRow) error {
-	hired, err := a.db.Query(ctx, `SELECT rr.main_office_id,h.full_name,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username) FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system JOIN main_office_report_rows rr ON rr.report_id=rp.id JOIN main_office_hired_workers h ON h.report_row_id=rr.id WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2) ORDER BY rp.owner_name_snapshot,h.created_at`, date, ownerID)
+	hired, err := a.db.Query(ctx, `SELECT rr.main_office_id,h.full_name,h.position,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username) FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system JOIN main_office_report_rows rr ON rr.report_id=rp.id JOIN main_office_hired_workers h ON h.report_row_id=rr.id WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2) ORDER BY rp.owner_name_snapshot,h.created_at`, date, ownerID)
 	if err != nil {
 		return err
 	}
 	for hired.Next() {
-		var officeID, name, responsible string
-		if err = hired.Scan(&officeID, &name, &responsible); err != nil {
+		var officeID, name, position, responsible string
+		if err = hired.Scan(&officeID, &name, &position, &responsible); err != nil {
 			hired.Close()
 			return err
 		}
 		if row := rows[officeID]; row != nil {
-			row.HiredDetails = append(row.HiredDetails, hiredDetail{FullName: name, Responsible: responsible})
+			row.HiredDetails = append(row.HiredDetails, hiredDetail{FullName: name, Position: position, Responsible: responsible})
 		}
 	}
 	hired.Close()
@@ -422,8 +422,8 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = tx.Exec(ctx, `DELETE FROM main_office_hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
-	for _, name := range nonEmpty(input.HiredWorkers) {
-		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name) VALUES($1,$2)`, r.PathValue("id"), name); err != nil {
+	for _, worker := range cleanHiredWorkers(input.HiredWorkers) {
+		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -446,5 +446,5 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log(ctx, "main_office_report_row.updated", "main_office_report_row", r.PathValue("id"))
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "openVacancies", "value": input.OpenVacancies, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan), "hiredCount": len(nonEmpty(input.HiredWorkers))})
+	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan), "hiredCount": len(cleanHiredWorkers(input.HiredWorkers))})
 }

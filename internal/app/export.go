@@ -265,18 +265,19 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kind exportKindConfig, from, to string, styles exportStyles) error {
 	hiredSheet := "Принятые " + kind.Sheet
 	_, _ = f.NewSheet(hiredSheet)
-	for index, header := range []string{kind.Unit, "Сотрудник которого приняли", "Ответственный"} {
+	for index, header := range []string{kind.Unit, "Должность", "Сотрудник которого приняли", "Ответственный"} {
 		cell, _ := excelize.CoordinatesToCellName(index+1, 1)
 		f.SetCellValue(hiredSheet, cell, header)
 	}
-	f.SetCellStyle(hiredSheet, "A1", "C1", styles.header)
+	f.SetCellStyle(hiredSheet, "A1", "D1", styles.header)
 	f.SetRowHeight(hiredSheet, 1, 34)
 	f.SetColWidth(hiredSheet, "A", "A", 30)
-	f.SetColWidth(hiredSheet, "B", "C", 34)
+	f.SetColWidth(hiredSheet, "B", "B", 28)
+	f.SetColWidth(hiredSheet, "C", "D", 34)
 	_ = f.SetPanes(hiredSheet, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})
-	_ = f.AutoFilter(hiredSheet, "A1:C1", nil)
+	_ = f.AutoFilter(hiredSheet, "A1:D1", nil)
 
-	hiresQuery := fmt.Sprintf(`SELECT COALESCE(NULLIF(rr.%s,''),o.name),hw.full_name,
+	hiresQuery := fmt.Sprintf(`SELECT COALESCE(NULLIF(rr.%s,''),o.name),hw.position,hw.full_name,
 		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM %s hw JOIN %s rr ON rr.id=hw.report_row_id JOIN %s rp ON rp.id=rr.report_id
 		JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
@@ -289,12 +290,12 @@ func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kin
 	}
 	row := 2
 	for hires.Next() {
-		var office, hired, responsible string
-		if err = hires.Scan(&office, &hired, &responsible); err != nil {
+		var office, position, hired, responsible string
+		if err = hires.Scan(&office, &position, &hired, &responsible); err != nil {
 			hires.Close()
 			return err
 		}
-		for column, value := range []string{office, hired, responsible} {
+		for column, value := range []string{office, position, hired, responsible} {
 			cell, _ := excelize.CoordinatesToCellName(column+1, row)
 			f.SetCellValue(hiredSheet, cell, value)
 		}
@@ -306,7 +307,7 @@ func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kin
 	}
 	hires.Close()
 	if row > 2 {
-		f.SetCellStyle(hiredSheet, "A2", fmt.Sprintf("C%d", row-1), styles.body)
+		f.SetCellStyle(hiredSheet, "A2", fmt.Sprintf("D%d", row-1), styles.body)
 	}
 
 	peopleSheet := "Списки ФИО " + kind.Sheet

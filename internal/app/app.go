@@ -147,7 +147,7 @@ type reportRow struct {
 	DismissedWorkers      int                           `json:"dismissedWorkers"`
 	Efficiency            float64                       `json:"efficiency"`
 	EfficiencyPlan        int                           `json:"efficiencyPlan"`
-	HiredWorkers          []string                      `json:"hiredWorkers"`
+	HiredWorkers          []hiredWorker                 `json:"hiredWorkers"`
 	HiredDetails          []hiredDetail                 `json:"hiredDetails,omitempty"`
 	People                map[string][]string           `json:"people"`
 	PeopleDetails         map[string][]hiredDetail      `json:"peopleDetails,omitempty"`
@@ -156,7 +156,13 @@ type reportRow struct {
 
 type hiredDetail struct {
 	FullName    string `json:"fullName"`
+	Position    string `json:"position"`
 	Responsible string `json:"responsible"`
+}
+
+type hiredWorker struct {
+	FullName string `json:"fullName"`
+	Position string `json:"position"`
 }
 
 type cellContribution struct {
@@ -313,7 +319,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 		}
 		x.EfficiencyPlan = plan
 		x.Efficiency = Efficiency(x.InterviewedCandidates, x.EfficiencyPlan)
-		x.HiredWorkers = make([]string, hires)
+		x.HiredWorkers = make([]hiredWorker, hires)
 		x.HiredDetails = []hiredDetail{}
 		x.People = map[string][]string{}
 		x.PeopleDetails = map[string][]hiredDetail{}
@@ -364,7 +370,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	if err = details.Err(); err != nil {
 		return nil, err
 	}
-	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
+	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,hw.position,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
 		JOIN hired_workers hw ON hw.report_row_id=rr.id
@@ -375,12 +381,12 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	}
 	defer hiredRows.Close()
 	for hiredRows.Next() {
-		var officeID, fullName, responsible string
-		if err = hiredRows.Scan(&officeID, &fullName, &responsible); err != nil {
+		var officeID, fullName, position, responsible string
+		if err = hiredRows.Scan(&officeID, &fullName, &position, &responsible); err != nil {
 			return nil, err
 		}
 		if row := byOffice[officeID]; row != nil {
-			row.HiredDetails = append(row.HiredDetails, hiredDetail{FullName: fullName, Responsible: responsible})
+			row.HiredDetails = append(row.HiredDetails, hiredDetail{FullName: fullName, Position: position, Responsible: responsible})
 		}
 	}
 	if err = hiredRows.Err(); err != nil {
@@ -444,19 +450,19 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 			return nil, err
 		}
 		x.Efficiency = Efficiency(x.InterviewedCandidates, x.EfficiencyPlan)
-		x.HiredWorkers = []string{}
+		x.HiredWorkers = []hiredWorker{}
 		x.People = map[string][]string{}
 		out = append(out, x)
 	}
 	for i := range out {
-		hr, err := a.db.Query(ctx, `SELECT full_name FROM hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, out[i].ID)
+		hr, err := a.db.Query(ctx, `SELECT full_name,position FROM hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, out[i].ID)
 		if err != nil {
 			return nil, err
 		}
 		for hr.Next() {
-			var n string
-			_ = hr.Scan(&n)
-			out[i].HiredWorkers = append(out[i].HiredWorkers, n)
+			var worker hiredWorker
+			_ = hr.Scan(&worker.FullName, &worker.Position)
+			out[i].HiredWorkers = append(out[i].HiredWorkers, worker)
 		}
 		hr.Close()
 		people, err := a.db.Query(ctx, `SELECT category,full_name FROM report_row_people WHERE report_row_id=$1 ORDER BY category,created_at,id`, out[i].ID)
@@ -488,7 +494,7 @@ type rowInput struct {
 	ReserveCandidates     int                 `json:"reserveCandidates"`
 	DismissedWorkers      int                 `json:"dismissedWorkers"`
 	ResponsibleIDs        []string            `json:"responsibleIds"`
-	HiredWorkers          []string            `json:"hiredWorkers"`
+	HiredWorkers          []hiredWorker       `json:"hiredWorkers"`
 	People                map[string][]string `json:"people"`
 }
 
@@ -565,13 +571,10 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_, _ = tx.Exec(ctx, `DELETE FROM hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
-	for _, n := range in.HiredWorkers {
-		n = strings.TrimSpace(n)
-		if n != "" {
-			if _, err = tx.Exec(ctx, `INSERT INTO hired_workers(report_row_id,full_name) VALUES($1,$2)`, r.PathValue("id"), n); err != nil {
-				serverError(w, err)
-				return
-			}
+	for _, worker := range cleanHiredWorkers(in.HiredWorkers) {
+		if _, err = tx.Exec(ctx, `INSERT INTO hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
+			serverError(w, err)
+			return
 		}
 	}
 	for category, names := range in.People {
@@ -595,7 +598,19 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.reports.send(reportDate, map[string]any{"type": "report_updated", "date": reportDate, "officeId": officeID, "field": "openVacancies", "value": in.OpenVacancies, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": eff, "hiredCount": len(nonEmpty(in.HiredWorkers))})
+	jsonOut(w, 200, map[string]any{"efficiency": eff, "hiredCount": len(cleanHiredWorkers(in.HiredWorkers))})
+}
+
+func cleanHiredWorkers(input []hiredWorker) []hiredWorker {
+	workers := make([]hiredWorker, 0, len(input))
+	for _, worker := range input {
+		worker.FullName = strings.TrimSpace(worker.FullName)
+		worker.Position = strings.TrimSpace(worker.Position)
+		if worker.FullName != "" {
+			workers = append(workers, worker)
+		}
+	}
+	return workers
 }
 
 func hasNegative(x rowInput) bool {

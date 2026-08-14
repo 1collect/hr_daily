@@ -9,9 +9,9 @@ import (
 )
 
 type exportSummaryRow struct {
-	Office                                                                                            string
-	OpenVacancies, Invited, Interviewed, Interns, PlannedReserve, Reserve, Dismissed, Plan, TotalPlan int
-	Responsible                                                                                       string
+	Office                                                                                        string
+	OpenVacancies, Invited, Interviewed, Interns, PlannedReserve, Reserve, Hired, Plan, TotalPlan int
+	Responsible                                                                                   string
 }
 
 type employeeExportSection struct {
@@ -21,7 +21,7 @@ type employeeExportSection struct {
 
 type exportKindConfig struct {
 	Kind, Sheet, Unit, Reports, Rows, Offices, OfficeID, NameSnapshot, SortSnapshot string
-	People, Shared, PlanTable                                                       string
+	Hired, People, Shared, PlanTable                                                string
 }
 
 type exportStyles struct {
@@ -32,12 +32,12 @@ var exportKinds = map[string]exportKindConfig{
 	"rp": {
 		Kind: "rp", Sheet: "РП", Unit: "РП", Reports: "reports", Rows: "report_rows", Offices: "offices",
 		OfficeID: "office_id", NameSnapshot: "office_name_snapshot", SortSnapshot: "office_sort_order_snapshot",
-		People: "report_row_people", Shared: "daily_office_shared", PlanTable: "employee_efficiency_plans",
+		Hired: "hired_workers", People: "report_row_people", Shared: "daily_office_shared", PlanTable: "employee_efficiency_plans",
 	},
 	"main_office": {
 		Kind: "main_office", Sheet: "ГО", Unit: "Компания", Reports: "main_office_reports", Rows: "main_office_report_rows", Offices: "main_offices",
 		OfficeID: "main_office_id", NameSnapshot: "main_office_name_snapshot", SortSnapshot: "main_office_sort_order_snapshot",
-		People: "main_office_report_row_people", Shared: "main_office_daily_shared", PlanTable: "main_office_employee_efficiency_plans",
+		Hired: "main_office_hired_workers", People: "main_office_report_row_people", Shared: "main_office_daily_shared", PlanTable: "main_office_employee_efficiency_plans",
 	},
 }
 
@@ -112,24 +112,24 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 		COALESCE((SELECT NULLIF(rr2.%s,'') FROM %s rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.%s=o.id ORDER BY rp2.report_date,rp2.created_at LIMIT 1),o.name) AS name,
 		COALESCE((SELECT NULLIF(rr2.%s,0) FROM %s rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.%s=o.id ORDER BY rp2.report_date,rp2.created_at LIMIT 1),o.sort_order) AS sort_order
 		FROM %s o WHERE o.active OR EXISTS(SELECT 1 FROM %s rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.%s=o.id)
-	), latest_shared AS (
+	), hc AS (SELECT report_row_id,count(*) AS n FROM %s GROUP BY report_row_id), latest_shared AS (
 		SELECT DISTINCT ON (ds.%s) ds.%s AS office_id,ds.open_vacancies,ds.planned_reserve FROM %s ds
 		WHERE ds.report_date BETWEEN $1 AND $2 ORDER BY ds.%s,ds.report_date DESC,ds.updated_at DESC
 	), activity_responsibles AS (
 		SELECT rr.%s AS office_id,rp.owner_name AS responsible FROM relevant_reports rp JOIN %s rr ON rr.report_id=rp.id
-		WHERE rr.invited_candidates>0 OR rr.interviewed_candidates>0 OR rr.interns>0 OR rr.reserve_candidates>0 OR rr.dismissed_workers>0
+		LEFT JOIN hc ON hc.report_row_id=rr.id WHERE rr.invited_candidates>0 OR rr.interviewed_candidates>0 OR rr.interns>0 OR rr.reserve_candidates>0 OR COALESCE(hc.n,0)>0
 	), office_responsibles AS (
 		SELECT office_id,string_agg(responsible,', ' ORDER BY responsible) AS responsible FROM activity_responsibles GROUP BY office_id
 	)
 	SELECT o.name,COALESCE(lv.open_vacancies,0),COALESCE(sum(rr.invited_candidates),0),COALESCE(sum(rr.interviewed_candidates),0),
-		COALESCE(sum(rr.interns),0),COALESCE(lv.planned_reserve,0),COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),
+		COALESCE(sum(rr.interns),0),COALESCE(lv.planned_reserve,0),COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(hc.n),0),
 		COALESCE(sum(rp.efficiency_plan) FILTER(WHERE rr.id IS NOT NULL),0),COALESCE(max(rp.total_efficiency_plan),0),COALESCE(resp.responsible,'')
 	FROM office_scope o LEFT JOIN latest_shared lv ON lv.office_id=o.id LEFT JOIN relevant_reports rp ON true
-	LEFT JOIN %s rr ON rr.report_id=rp.id AND rr.%s=o.id
+	LEFT JOIN %s rr ON rr.report_id=rp.id AND rr.%s=o.id LEFT JOIN hc ON hc.report_row_id=rr.id
 	LEFT JOIN office_responsibles resp ON resp.office_id=o.id
 	GROUP BY o.id,o.name,o.sort_order,lv.open_vacancies,lv.planned_reserve,resp.responsible ORDER BY o.sort_order,o.name`,
 		relevant, kind.NameSnapshot, kind.Rows, kind.OfficeID, kind.SortSnapshot, kind.Rows, kind.OfficeID,
-		kind.Offices, kind.Rows, kind.OfficeID, kind.OfficeID, kind.OfficeID, kind.Shared, kind.OfficeID,
+		kind.Offices, kind.Rows, kind.OfficeID, kind.Hired, kind.OfficeID, kind.OfficeID, kind.Shared, kind.OfficeID,
 		kind.OfficeID, kind.Rows, kind.Rows, kind.OfficeID)
 	query, err := a.db.Query(ctx, summaryQuery, from, to, kind.Kind)
 	if err != nil {
@@ -138,7 +138,7 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 	rows := []exportSummaryRow{}
 	for query.Next() {
 		var item exportSummaryRow
-		if err = query.Scan(&item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Dismissed, &item.Plan, &item.TotalPlan, &item.Responsible); err != nil {
+		if err = query.Scan(&item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Hired, &item.Plan, &item.TotalPlan, &item.Responsible); err != nil {
 			query.Close()
 			return nil, nil, err
 		}
@@ -150,18 +150,20 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 	}
 	query.Close()
 
-	employeeQuery := fmt.Sprintf(`WITH relevant_reports AS (%s), latest_shared AS (
+	employeeQuery := fmt.Sprintf(`WITH relevant_reports AS (%s), hc AS (
+		SELECT report_row_id,count(*) AS n FROM %s GROUP BY report_row_id
+	), latest_shared AS (
 		SELECT DISTINCT ON (ds.%s) ds.%s AS office_id,ds.open_vacancies,ds.planned_reserve FROM %s ds
 		WHERE ds.report_date BETWEEN $1 AND $2 ORDER BY ds.%s,ds.report_date DESC,ds.updated_at DESC
 	)
 	SELECT rp.owner_user_id::text,rp.owner_name,COALESCE(NULLIF(rr.%s,''),o.name),COALESCE(lv.open_vacancies,0),
 		COALESCE(sum(rr.invited_candidates),0),COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
-		COALESCE(lv.planned_reserve,0),COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(rp.efficiency_plan),0),COALESCE(max(rp.owner_efficiency_plan),0)
+		COALESCE(lv.planned_reserve,0),COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(hc.n),0),COALESCE(sum(rp.efficiency_plan),0),COALESCE(max(rp.owner_efficiency_plan),0)
 	FROM relevant_reports rp JOIN %s rr ON rr.report_id=rp.id JOIN %s o ON o.id=rr.%s
-	LEFT JOIN latest_shared lv ON lv.office_id=rr.%s
+	LEFT JOIN hc ON hc.report_row_id=rr.id LEFT JOIN latest_shared lv ON lv.office_id=rr.%s
 	GROUP BY rp.owner_user_id,rp.owner_name,o.id,COALESCE(NULLIF(rr.%s,''),o.name),COALESCE(NULLIF(rr.%s,0),o.sort_order),lv.open_vacancies,lv.planned_reserve
 	ORDER BY rp.owner_name,COALESCE(NULLIF(rr.%s,0),o.sort_order),COALESCE(NULLIF(rr.%s,''),o.name)`,
-		relevant, kind.OfficeID, kind.OfficeID, kind.Shared, kind.OfficeID, kind.NameSnapshot,
+		relevant, kind.Hired, kind.OfficeID, kind.OfficeID, kind.Shared, kind.OfficeID, kind.NameSnapshot,
 		kind.Rows, kind.Offices, kind.OfficeID, kind.OfficeID, kind.NameSnapshot, kind.SortSnapshot, kind.SortSnapshot, kind.NameSnapshot)
 	employeeRows, err := a.db.Query(ctx, employeeQuery, from, to, kind.Kind)
 	if err != nil {
@@ -172,11 +174,11 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 	for employeeRows.Next() {
 		var employeeID, employeeName string
 		var item exportSummaryRow
-		if err = employeeRows.Scan(&employeeID, &employeeName, &item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Dismissed, &item.Plan, &item.TotalPlan); err != nil {
+		if err = employeeRows.Scan(&employeeID, &employeeName, &item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Hired, &item.Plan, &item.TotalPlan); err != nil {
 			employeeRows.Close()
 			return nil, nil, err
 		}
-		if item.Invited > 0 || item.Interviewed > 0 || item.Interns > 0 || item.Reserve > 0 || item.Dismissed > 0 {
+		if item.Invited > 0 || item.Interviewed > 0 || item.Interns > 0 || item.Reserve > 0 || item.Hired > 0 {
 			item.Responsible = employeeName
 		}
 		index, exists := indexes[employeeID]
@@ -207,7 +209,7 @@ func newExportStyles(f *excelize.File) exportStyles {
 }
 
 func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exportSummaryRow, sections []employeeExportSection, styles exportStyles) {
-	headers := []string{kind.Unit, "Количество открытых вакансий", "Количество приглашенных кандидатов", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Планируемый резерв", "Количество кандидатов в резерве", "Количество уволенных работников", "Ответственный работник", "Эффективность работников, %"}
+	headers := []string{kind.Unit, "Количество открытых вакансий", "Количество приглашенных кандидатов", "Количество прошедших собеседование", "Количество кандидатов на стажировке", "Планируемый резерв", "Количество кандидатов в резерве", "Количество принятых работников", "Ответственный работник", "Эффективность работников, %"}
 	writeTable := func(startRow int, tableRows []exportSummaryRow, responsibleTotal string) int {
 		for column, header := range headers {
 			cell, _ := excelize.CoordinatesToCellName(column+1, startRow)
@@ -221,7 +223,7 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 		}
 		for index, item := range tableRows {
 			row := startRow + index + 1
-			values := []any{item.Office, item.OpenVacancies, item.Invited, item.Interviewed, item.Interns, item.PlannedReserve, item.Reserve, item.Dismissed, item.Responsible, Efficiency(item.Interviewed, item.Plan)}
+			values := []any{item.Office, item.OpenVacancies, item.Invited, item.Interviewed, item.Interns, item.PlannedReserve, item.Reserve, item.Hired, item.Responsible, Efficiency(item.Interviewed, item.Plan)}
 			for column, value := range values {
 				cell, _ := excelize.CoordinatesToCellName(column+1, row)
 				f.SetCellValue(kind.Sheet, cell, value)
@@ -232,14 +234,14 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 			total.Interns += item.Interns
 			total.PlannedReserve += item.PlannedReserve
 			total.Reserve += item.Reserve
-			total.Dismissed += item.Dismissed
+			total.Hired += item.Hired
 		}
 		if len(tableRows) > 0 {
 			f.SetCellStyle(kind.Sheet, fmt.Sprintf("A%d", startRow+1), fmt.Sprintf("J%d", startRow+len(tableRows)), styles.body)
 			f.SetCellStyle(kind.Sheet, fmt.Sprintf("J%d", startRow+1), fmt.Sprintf("J%d", startRow+len(tableRows)), styles.efficiencyBody)
 		}
 		totalRow := startRow + len(tableRows) + 1
-		values := []any{"ИТОГО:", total.OpenVacancies, total.Invited, total.Interviewed, total.Interns, total.PlannedReserve, total.Reserve, total.Dismissed, responsibleTotal, Efficiency(total.Interviewed, total.TotalPlan)}
+		values := []any{"ИТОГО:", total.OpenVacancies, total.Invited, total.Interviewed, total.Interns, total.PlannedReserve, total.Reserve, total.Hired, responsibleTotal, Efficiency(total.Interviewed, total.TotalPlan)}
 		for column, value := range values {
 			cell, _ := excelize.CoordinatesToCellName(column+1, totalRow)
 			f.SetCellValue(kind.Sheet, cell, value)
@@ -265,6 +267,53 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 }
 
 func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kind exportKindConfig, from, to string, styles exportStyles) error {
+	hiredSheet := "Принятые " + kind.Sheet
+	_, _ = f.NewSheet(hiredSheet)
+	for index, header := range []string{kind.Unit, "Должность", "Сотрудник которого приняли", "Ответственный"} {
+		cell, _ := excelize.CoordinatesToCellName(index+1, 1)
+		f.SetCellValue(hiredSheet, cell, header)
+	}
+	f.SetCellStyle(hiredSheet, "A1", "D1", styles.header)
+	f.SetRowHeight(hiredSheet, 1, 34)
+	f.SetColWidth(hiredSheet, "A", "A", 30)
+	f.SetColWidth(hiredSheet, "B", "B", 28)
+	f.SetColWidth(hiredSheet, "C", "D", 34)
+	_ = f.SetPanes(hiredSheet, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})
+	_ = f.AutoFilter(hiredSheet, "A1:D1", nil)
+
+	hiresQuery := fmt.Sprintf(`SELECT COALESCE(NULLIF(rr.%s,''),o.name),hw.position,hw.full_name,
+		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
+		FROM %s hw JOIN %s rr ON rr.id=hw.report_row_id JOIN %s rp ON rp.id=rr.report_id
+		JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
+		JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2
+		ORDER BY COALESCE(NULLIF(rr.%s,0),o.sort_order),e.last_name,e.first_name,e.middle_name,hw.created_at`,
+		kind.NameSnapshot, kind.Hired, kind.Rows, kind.Reports, kind.Offices, kind.OfficeID, kind.SortSnapshot)
+	hires, err := a.db.Query(ctx, hiresQuery, from, to)
+	if err != nil {
+		return err
+	}
+	row := 2
+	for hires.Next() {
+		var office, position, hired, responsible string
+		if err = hires.Scan(&office, &position, &hired, &responsible); err != nil {
+			hires.Close()
+			return err
+		}
+		for column, value := range []string{office, position, hired, responsible} {
+			cell, _ := excelize.CoordinatesToCellName(column+1, row)
+			f.SetCellValue(hiredSheet, cell, value)
+		}
+		row++
+	}
+	if err = hires.Err(); err != nil {
+		hires.Close()
+		return err
+	}
+	hires.Close()
+	if row > 2 {
+		f.SetCellStyle(hiredSheet, "A2", fmt.Sprintf("D%d", row-1), styles.body)
+	}
+
 	peopleSheet := "Списки ФИО " + kind.Sheet
 	_, _ = f.NewSheet(peopleSheet)
 	for index, header := range []string{"Дата", kind.Unit, "Показатель", "ФИО", "Ответственный"} {
@@ -284,15 +333,15 @@ func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kin
 		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM %s p JOIN %s rr ON rr.id=p.report_row_id JOIN %s rp ON rp.id=rr.report_id
 		JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
-		JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2
+		JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2 AND p.category<>'dismissed_workers'
 		ORDER BY rp.report_date,COALESCE(NULLIF(rr.%s,0),o.sort_order),p.category,e.last_name,e.first_name,p.created_at,p.id`,
 		kind.NameSnapshot, kind.People, kind.Rows, kind.Reports, kind.Offices, kind.OfficeID, kind.SortSnapshot)
 	people, err := a.db.Query(ctx, peopleQuery, from, to)
 	if err != nil {
 		return err
 	}
-	labels := map[string]string{"invited_candidates": "Приглашённые кандидаты", "interviewed_candidates": "Прошедшие собеседование", "interns": "Кандидаты на стажировке", "reserve_candidates": "Кандидаты в резерве", "dismissed_workers": "Уволенные работники"}
-	row := 2
+	labels := map[string]string{"invited_candidates": "Приглашённые кандидаты", "interviewed_candidates": "Прошедшие собеседование", "interns": "Кандидаты на стажировке", "reserve_candidates": "Кандидаты в резерве"}
+	row = 2
 	for people.Next() {
 		var date, office, category, fullName, responsible string
 		if err = people.Scan(&date, &office, &category, &fullName, &responsible); err != nil {

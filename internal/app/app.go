@@ -569,6 +569,13 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
 	}
+	_, _ = tx.Exec(ctx, `DELETE FROM hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
+	for _, worker := range cleanHiredWorkers(in.HiredWorkers) {
+		if _, err = tx.Exec(ctx, `INSERT INTO hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	_, _ = tx.Exec(ctx, `DELETE FROM report_row_responsibles WHERE report_row_id=$1`, r.PathValue("id"))
 	for _, id := range in.ResponsibleIDs {
 		if _, err = tx.Exec(ctx, `INSERT INTO report_row_responsibles VALUES($1,$2) ON CONFLICT DO NOTHING`, r.PathValue("id"), id); err != nil {
@@ -598,7 +605,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 	}
 	a.reports.send(reportDate, map[string]any{"type": "report_updated", "date": reportDate, "officeId": officeID, "field": "openVacancies", "value": in.OpenVacancies, "updatedBy": claims.Username})
 	a.reports.send(reportDate, map[string]any{"type": "report_updated", "date": reportDate, "officeId": officeID, "field": "plannedReserve", "value": in.PlannedReserve, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": eff})
+	jsonOut(w, 200, map[string]any{"efficiency": eff, "hiredCount": len(cleanHiredWorkers(in.HiredWorkers))})
 }
 
 func cleanHiredWorkers(input []hiredWorker) []hiredWorker {
@@ -667,7 +674,7 @@ func (a *App) completeReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func totals(rows []reportRow, plan int) map[string]any {
-	t := map[string]any{"openVacancies": 0, "plannedReserve": 0, "invitedCandidates": 0, "interviewedCandidates": 0, "interns": 0, "reserveCandidates": 0, "dismissedWorkers": 0, "efficiencyPlan": plan}
+	t := map[string]any{"openVacancies": 0, "plannedReserve": 0, "invitedCandidates": 0, "interviewedCandidates": 0, "interns": 0, "reserveCandidates": 0, "hiredWorkers": 0, "dismissedWorkers": 0, "efficiencyPlan": plan}
 	for _, x := range rows {
 		t["openVacancies"] = t["openVacancies"].(int) + x.OpenVacancies
 		t["plannedReserve"] = t["plannedReserve"].(int) + x.PlannedReserve
@@ -675,6 +682,7 @@ func totals(rows []reportRow, plan int) map[string]any {
 		t["interviewedCandidates"] = t["interviewedCandidates"].(int) + x.InterviewedCandidates
 		t["interns"] = t["interns"].(int) + x.Interns
 		t["reserveCandidates"] = t["reserveCandidates"].(int) + x.ReserveCandidates
+		t["hiredWorkers"] = t["hiredWorkers"].(int) + len(x.HiredWorkers)
 		t["dismissedWorkers"] = t["dismissedWorkers"].(int) + x.DismissedWorkers
 	}
 	t["efficiency"] = Efficiency(t["interviewedCandidates"].(int), plan)

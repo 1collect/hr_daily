@@ -41,11 +41,21 @@ func TestExportQueriesAgainstPostgres(t *testing.T) {
 		if detailErr := a.writeExportDetailSheets(ctx, file, kind, "2026-08-01", "2026-08-31", styles); detailErr != nil {
 			t.Fatalf("load %s export details: %v", kind.Kind, detailErr)
 		}
+		hiredSheet := "Принятые " + kind.Sheet
+		if header, _ := file.GetCellValue(hiredSheet, "B1"); header != "Должность" {
+			t.Fatalf("%s B1 is %q, want Должность", hiredSheet, header)
+		}
+		if header, _ := file.GetCellValue(hiredSheet, "C1"); header != "Сотрудник которого приняли" {
+			t.Fatalf("%s C1 is %q, want employee header", hiredSheet, header)
+		}
 		if header, _ := file.GetCellValue(kind.Sheet, "F1"); header != "Планируемый резерв" {
 			t.Fatalf("%s F1 is %q, want Планируемый резерв", kind.Sheet, header)
 		}
+		if header, _ := file.GetCellValue(kind.Sheet, "H1"); header != "Количество принятых работников" {
+			t.Fatalf("%s H1 is %q, want hired workers", kind.Sheet, header)
+		}
 	}
-	wantSheets := []string{"РП", "Списки ФИО РП", "ГО", "Списки ФИО ГО"}
+	wantSheets := []string{"РП", "Принятые РП", "Списки ФИО РП", "ГО", "Принятые ГО", "Списки ФИО ГО"}
 	gotSheets := file.GetSheetList()
 	if len(gotSheets) != len(wantSheets) {
 		t.Fatalf("unexpected sheets: %v", gotSheets)

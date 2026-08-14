@@ -422,6 +422,13 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	_, _ = tx.Exec(ctx, `DELETE FROM main_office_hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
+	for _, worker := range cleanHiredWorkers(input.HiredWorkers) {
+		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	for category, names := range input.People {
 		if _, err = tx.Exec(ctx, `DELETE FROM main_office_report_row_people WHERE report_row_id=$1 AND category=$2`, r.PathValue("id"), category); err != nil {
 			serverError(w, err)
@@ -441,5 +448,5 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	a.log(ctx, "main_office_report_row.updated", "main_office_report_row", r.PathValue("id"))
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "openVacancies", "value": input.OpenVacancies, "updatedBy": claims.Username})
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "plannedReserve", "value": input.PlannedReserve, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan)})
+	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan), "hiredCount": len(cleanHiredWorkers(input.HiredWorkers))})
 }

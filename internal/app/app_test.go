@@ -45,13 +45,16 @@ func TestEmployeeCanBeCreatedWithoutPlan(t *testing.T) {
 }
 
 func TestTotalsUsesPlanOnce(t *testing.T) {
-	rows := []reportRow{{InterviewedCandidates: 2, PlannedReserve: 4, EfficiencyPlan: 10}, {InterviewedCandidates: 3, PlannedReserve: 6, EfficiencyPlan: 10}}
+	rows := []reportRow{{InterviewedCandidates: 2, PlannedReserve: 4, HiredWorkers: []hiredWorker{{FullName: "Первый"}}, EfficiencyPlan: 10}, {InterviewedCandidates: 3, PlannedReserve: 6, HiredWorkers: []hiredWorker{{FullName: "Второй"}}, EfficiencyPlan: 10}}
 	got := totals(rows, 10)
 	if got["efficiencyPlan"] != 10 || got["efficiency"] != 50.0 {
 		t.Fatalf("unexpected totals: %#v", got)
 	}
 	if got["plannedReserve"] != 10 {
 		t.Fatalf("planned reserve total=%v, want 10", got["plannedReserve"])
+	}
+	if got["hiredWorkers"] != 2 {
+		t.Fatalf("hired workers total=%v, want 2", got["hiredWorkers"])
 	}
 }
 
@@ -65,6 +68,9 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	writeExportSummarySheet(f, exportKinds["rp"], rows, nil, newExportStyles(f))
 	if header, err := f.GetCellValue("РП", "F1"); err != nil || header != "Планируемый резерв" {
 		t.Fatalf("planned reserve header=%q, err=%v", header, err)
+	}
+	if header, err := f.GetCellValue("РП", "H1"); err != nil || header != "Количество принятых работников" {
+		t.Fatalf("hired workers header=%q, err=%v", header, err)
 	}
 	got, err := f.GetCellValue("РП", "J4")
 	if err != nil {

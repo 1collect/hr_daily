@@ -51,7 +51,7 @@ docker compose up -d
 | `SUPERADMIN_LOGIN` | Логин системного суперадминистратора |
 | `SUPERADMIN_PASSWORD` | Начальный пароль суперадминистратора |
 | `APP_PORT` | Входной порт, в примере `6770` |
-| `DOCKER_NETWORK` | Обязательное имя Docker-сети проекта |
+| `DOCKER_NETWORK` | Обязательное имя существующей внешней Docker-сети |
 
 ## Проверки
 
@@ -75,5 +75,6 @@ docker compose run --rm backend /app/hr-server check-debtster
 ```
 
 Выполненные версии и их контрольные суммы хранятся в таблице `schema_migrations`; SQL-файлы
-встроены в Go-бинарник. Имя внутренней Docker-сети задаётся обязательной переменной
-`DOCKER_NETWORK`.
+встроены в Go-бинарник. Имя существующей внешней Docker-сети задаётся обязательной
+переменной `DOCKER_NETWORK`. Если сети ещё нет, создайте её командой
+`docker network create <имя_сети>`.

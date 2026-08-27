@@ -35,7 +35,7 @@ services:
 networks:
   docker_network:
     name: ${DOCKER_NETWORK:?DOCKER_NETWORK is required}
-    driver: bridge
+    external: true
 
 volumes:
   postgres_data:

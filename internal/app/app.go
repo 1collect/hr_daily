@@ -134,24 +134,31 @@ type employee struct {
 	Active     bool   `json:"active"`
 }
 type reportRow struct {
-	ID                    string                        `json:"id"`
-	OfficeID              string                        `json:"officeId"`
-	OfficeName            string                        `json:"officeName"`
-	SortOrder             int                           `json:"sortOrder"`
-	OpenVacancies         int                           `json:"openVacancies"`
-	PlannedReserve        int                           `json:"plannedReserve"`
-	InvitedCandidates     int                           `json:"invitedCandidates"`
-	InterviewedCandidates int                           `json:"interviewedCandidates"`
-	Interns               int                           `json:"interns"`
-	ReserveCandidates     int                           `json:"reserveCandidates"`
-	DismissedWorkers      int                           `json:"dismissedWorkers"`
-	Efficiency            float64                       `json:"efficiency"`
-	EfficiencyPlan        int                           `json:"efficiencyPlan"`
-	HiredWorkers          []hiredWorker                 `json:"hiredWorkers"`
-	HiredDetails          []hiredDetail                 `json:"hiredDetails,omitempty"`
-	People                map[string][]string           `json:"people"`
-	PeopleDetails         map[string][]hiredDetail      `json:"peopleDetails,omitempty"`
-	Contributions         map[string][]cellContribution `json:"contributions,omitempty"`
+	ID                     string                        `json:"id"`
+	OfficeID               string                        `json:"officeId"`
+	OfficeName             string                        `json:"officeName"`
+	SortOrder              int                           `json:"sortOrder"`
+	OpenVacancies          int                           `json:"openVacancies"`
+	PlannedReserve         int                           `json:"plannedReserve"`
+	InvitedCandidates      int                           `json:"invitedCandidates"`
+	InterviewedCandidates  int                           `json:"interviewedCandidates"`
+	Interns                int                           `json:"interns"`
+	ReserveCandidates      int                           `json:"reserveCandidates"`
+	DismissedWorkers       int                           `json:"dismissedWorkers"`
+	StaffPositionsCount    int                           `json:"staffPositionsCount"`
+	ActiveEmployeesCount   int                           `json:"activeEmployeesCount"`
+	VacantPositionsCount   int                           `json:"vacantPositionsCount"`
+	TraineesCount          int                           `json:"traineesCount"`
+	RecruitmentCount       int                           `json:"recruitmentCount"`
+	PlannedDismissalsCount int                           `json:"plannedDismissalsCount"`
+	PlannedDismissals      []debtsterPlannedDismissal    `json:"plannedDismissals"`
+	Efficiency             float64                       `json:"efficiency"`
+	EfficiencyPlan         int                           `json:"efficiencyPlan"`
+	HiredWorkers           []hiredWorker                 `json:"hiredWorkers"`
+	HiredDetails           []hiredDetail                 `json:"hiredDetails,omitempty"`
+	People                 map[string][]string           `json:"people"`
+	PeopleDetails          map[string][]hiredDetail      `json:"peopleDetails,omitempty"`
+	Contributions          map[string][]cellContribution `json:"contributions,omitempty"`
 }
 
 type hiredDetail struct {
@@ -192,8 +199,12 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 	usesDebtster := usesDebtsterDepartments(date)
 	shouldSyncDebtster := shouldSyncDebtsterDepartments(date, today)
 	var departments []debtsterDepartment
+	var vacancies []debtsterVacancyReport
+	vacancies, err := fetchDebtsterVacancies(ctx, a.httpClient, a.debtsterAPI, date)
+	if err != nil {
+		log.Printf("read Debtster vacancies for %s: %v", date, err)
+	}
 	if shouldSyncDebtster {
-		var err error
 		departments, err = fetchDebtsterDepartments(ctx, a.httpClient, a.debtsterAPI)
 		if err != nil {
 			log.Printf("sync Debtster departments: %v", err)
@@ -229,13 +240,15 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows = appendMissingDebtsterRows(rows, departments, plan)
+		rows = appendMissingDebtsterVacancyRows(rows, vacancies, plan)
+		applyDebtsterVacancies(rows, vacancies)
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
 		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
 		return
 	}
 	var reportID, status string
-	err := a.db.QueryRow(ctx, `INSERT INTO reports(report_date,owner_user_id,owner_name_snapshot)
+	err = a.db.QueryRow(ctx, `INSERT INTO reports(report_date,owner_user_id,owner_name_snapshot)
 		SELECT $1,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
 		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$2
 		ON CONFLICT(report_date,owner_user_id) WHERE owner_user_id IS NOT NULL DO UPDATE SET report_date=EXCLUDED.report_date
@@ -263,6 +276,8 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	rows = appendMissingDebtsterVacancyRows(rows, vacancies, 0)
+	applyDebtsterVacancies(rows, vacancies)
 	plan, err := a.efficiencyPlanTotal(ctx, date, claims.UserID)
 	if err != nil {
 		serverError(w, err)

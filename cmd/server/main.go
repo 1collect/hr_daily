@@ -31,11 +31,11 @@ func main() {
 			log.Print("database migrations applied")
 			return
 		case "check-debtster":
-			count, err := app.CheckDebtsterAPI(ctx, require("DEBTSTER_API"))
+			departments, vacancies, err := app.CheckDebtsterAPI(ctx, require("DEBTSTER_API"))
 			if err != nil {
 				log.Fatalf("Debtster API check failed: %v", err)
 			}
-			log.Printf("Debtster API check passed: %d departments received", count)
+			log.Printf("Debtster API check passed: %d departments and %d vacancy reports received", departments, vacancies)
 			return
 		}
 	}

@@ -66,3 +66,81 @@ func TestExportQueriesAgainstPostgres(t *testing.T) {
 		}
 	}
 }
+
+func TestDebtsterDepartmentsAreStoredDirectlyInReports(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = migrations.Up(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var officesBefore int
+	if err = db.QueryRow(ctx, `SELECT count(*) FROM offices`).Scan(&officesBefore); err != nil {
+		t.Fatal(err)
+	}
+	date := "2099-01-05"
+	for _, username := range []string{"debtster-direct-one", "debtster-direct-two"} {
+		if _, err = db.Exec(ctx, `WITH new_user AS (
+			INSERT INTO users(username,password_hash,role) VALUES($1,'test','employee') RETURNING id)
+			INSERT INTO reports(report_date,owner_user_id) SELECT $2,id FROM new_user`, username, date); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() {
+		_, _ = db.Exec(ctx, `DELETE FROM reports WHERE report_date=$1`, date)
+		_, _ = db.Exec(ctx, `DELETE FROM users WHERE username IN ('debtster-direct-one','debtster-direct-two')`)
+	}()
+	a := &App{db: db}
+	departments, err := a.syncDebtsterReportRows(ctx, date, []debtsterDepartment{
+		{ID: 12, Name: "rp_almaty", DisplayName: "РП Алматы"},
+		{ID: 18, Name: "rp_astana", DisplayName: "РП Астана"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(departments) != 2 {
+		t.Fatalf("got %d departments, want 2", len(departments))
+	}
+	departments, err = a.syncDebtsterReportRows(ctx, date, []debtsterDepartment{
+		{ID: 12, Name: "rp_almaty", DisplayName: "РП Алматы новое имя"},
+		{ID: 25, Name: "rp_shymkent", DisplayName: "РП Шымкент"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(departments) != 3 || departments[2].ID != 25 {
+		t.Fatalf("departments were not retained/appended: %#v", departments)
+	}
+	var rows, legacyLinks, officesAfter int
+	if err = db.QueryRow(ctx, `SELECT count(*),count(office_id) FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id WHERE rp.report_date=$1`, date).Scan(&rows, &legacyLinks); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(ctx, `SELECT count(*) FROM offices`).Scan(&officesAfter); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 6 || legacyLinks != 0 || officesAfter != officesBefore {
+		t.Fatalf("rows=%d legacy links=%d offices before=%d after=%d", rows, legacyLinks, officesBefore, officesAfter)
+	}
+	var reportID string
+	if err = db.QueryRow(ctx, `SELECT id FROM reports WHERE report_date=$1 ORDER BY id LIMIT 1`, date).Scan(&reportID); err != nil {
+		t.Fatal(err)
+	}
+	personalRows, err := a.loadRows(ctx, reportID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregateRows, err := a.loadAggregateRows(ctx, date, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(personalRows) != 3 || len(aggregateRows) != 3 || personalRows[0].OfficeID != "12" {
+		t.Fatalf("personal=%#v aggregate=%#v", personalRows, aggregateRows)
+	}
+}

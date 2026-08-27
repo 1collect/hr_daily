@@ -18,6 +18,7 @@ import (
 
 type Config struct {
 	DatabaseURL string
+	DebtsterAPI string
 	HTTPAddr    string
 	StaticDir   string
 	AppSecret   string
@@ -26,11 +27,13 @@ type Config struct {
 }
 
 type App struct {
-	db       *pgxpool.Pool
-	static   string
-	secret   []byte
-	progress *progressHub
-	reports  *reportHub
+	db          *pgxpool.Pool
+	debtsterAPI string
+	httpClient  *http.Client
+	static      string
+	secret      []byte
+	progress    *progressHub
+	reports     *reportHub
 }
 
 type progressHub struct {
@@ -51,7 +54,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer db.Close()
 
-	a := &App{db: db, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a := &App{db: db, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
 	}
@@ -94,10 +97,6 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("PUT /api/report/rows/{id}", a.updateRow)
 	m.HandleFunc("POST /api/reports/{id}/complete", a.completeReport)
 	m.HandleFunc("GET /api/reports/export", a.exportPeriod)
-	m.HandleFunc("GET /api/offices", a.offices)
-	m.HandleFunc("POST /api/offices", a.createOffice)
-	m.HandleFunc("PUT /api/offices/order", a.reorderOffices)
-	m.HandleFunc("PUT /api/offices/{id}", a.updateOffice)
 	m.HandleFunc("GET /api/main-offices", a.mainOffices)
 	m.HandleFunc("POST /api/main-offices", a.createMainOffice)
 	m.HandleFunc("PUT /api/main-offices/order", a.reorderMainOffices)
@@ -189,8 +188,27 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	today := localToday()
+	usesDebtster := usesDebtsterDepartments(date)
+	shouldSyncDebtster := shouldSyncDebtsterDepartments(date, today)
+	var departments []debtsterDepartment
+	if shouldSyncDebtster {
+		var err error
+		departments, err = fetchDebtsterDepartments(ctx, a.httpClient, a.debtsterAPI)
+		if err != nil {
+			log.Printf("sync Debtster departments: %v", err)
+		}
+	}
 	claims := claimsFrom(ctx)
 	if isManager(claims) {
+		if shouldSyncDebtster {
+			var err error
+			departments, err = a.syncDebtsterReportRows(ctx, date, departments)
+			if err != nil {
+				serverError(w, err)
+				return
+			}
+		}
 		employeeID := strings.TrimSpace(r.URL.Query().Get("employeeId"))
 		if employeeID != "" {
 			var active bool
@@ -210,6 +228,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
+		rows = appendMissingDebtsterRows(rows, departments, plan)
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
 		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
@@ -225,17 +244,22 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	_, err = a.db.Exec(ctx, `INSERT INTO report_rows(report_id,office_id,office_name_snapshot,office_sort_order_snapshot) SELECT $1,id,name,sort_order FROM offices WHERE active ON CONFLICT DO NOTHING`, reportID)
-	if err != nil {
-		serverError(w, err)
-		return
+	if shouldSyncDebtster {
+		if _, err = a.syncDebtsterReportRows(ctx, date, departments); err != nil {
+			serverError(w, err)
+			return
+		}
+	} else if !usesDebtster {
+		_, err = a.db.Exec(ctx, `INSERT INTO report_rows(report_id,office_id,office_name_snapshot,office_sort_order_snapshot,debtster_department_id,debtster_department_name)
+			SELECT $1,id,name,sort_order,debtster_department_id,debtster_department_name FROM offices
+			WHERE active ON CONFLICT DO NOTHING`, reportID)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	rows, err := a.loadRows(ctx, reportID)
 	if err != nil {
-		serverError(w, err)
-		return
-	}
-	if err = a.applySharedVacancies(ctx, date, rows); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -258,30 +282,6 @@ func (a *App) efficiencyPlanTotal(ctx context.Context, date, ownerID string) (in
 	return plan, err
 }
 
-func (a *App) applySharedVacancies(ctx context.Context, date string, rows []reportRow) error {
-	q, err := a.db.Query(ctx, `SELECT office_id,open_vacancies,planned_reserve FROM daily_office_shared WHERE report_date=$1`, date)
-	if err != nil {
-		return err
-	}
-	defer q.Close()
-	type sharedValues struct{ openVacancies, plannedReserve int }
-	values := map[string]sharedValues{}
-	for q.Next() {
-		var id string
-		var value sharedValues
-		if err = q.Scan(&id, &value.openVacancies, &value.plannedReserve); err != nil {
-			return err
-		}
-		values[id] = value
-	}
-	for i := range rows {
-		value := values[rows[i].OfficeID]
-		rows[i].OpenVacancies = value.openVacancies
-		rows[i].PlannedReserve = value.plannedReserve
-	}
-	return q.Err()
-}
-
 func localToday() string {
 	loc, err := time.LoadLocation("Asia/Qyzylorda")
 	if err != nil {
@@ -294,22 +294,15 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	q, err := a.db.Query(ctx, `WITH relevant_reports AS (
 		SELECT rp.* FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
-	), office_scope AS (
-		SELECT o.id,
-		COALESCE((SELECT NULLIF(rr2.office_name_snapshot,'') FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id ORDER BY rp2.created_at LIMIT 1),o.name) AS name,
-		COALESCE((SELECT NULLIF(rr2.office_sort_order_snapshot,0) FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id ORDER BY rp2.created_at LIMIT 1),o.sort_order) AS sort_order
-		FROM offices o WHERE o.active OR EXISTS (SELECT 1 FROM report_rows rr2 JOIN relevant_reports rp2 ON rp2.id=rr2.report_id WHERE rr2.office_id=o.id)
 	), hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-		SELECT o.id,o.name,o.sort_order,
-		COALESCE(ds.open_vacancies,0),COALESCE(ds.planned_reserve,0),COALESCE(sum(rr.invited_candidates),0),
+		SELECT COALESCE(rr.debtster_department_id::text,rr.office_id::text),max(rr.office_name_snapshot),min(rr.office_sort_order_snapshot),
+		COALESCE(max(rr.open_vacancies),0),COALESCE(max(rr.planned_reserve),0),COALESCE(sum(rr.invited_candidates),0),
 		COALESCE(sum(rr.interviewed_candidates),0),COALESCE(sum(rr.interns),0),
 		COALESCE(sum(rr.reserve_candidates),0),COALESCE(sum(rr.dismissed_workers),0),COALESCE(sum(hc.n),0)
-		FROM office_scope o
-		LEFT JOIN relevant_reports rp ON true
-		LEFT JOIN report_rows rr ON rr.office_id=o.id AND rr.report_id=rp.id
+		FROM relevant_reports rp JOIN report_rows rr ON rr.report_id=rp.id
 		LEFT JOIN hc ON hc.report_row_id=rr.id
-		LEFT JOIN daily_office_shared ds ON ds.report_date=$1 AND ds.office_id=o.id
-		GROUP BY o.id,o.name,o.sort_order,ds.open_vacancies,ds.planned_reserve ORDER BY o.sort_order,o.name`, date, ownerID)
+		GROUP BY COALESCE(rr.debtster_department_id::text,rr.office_id::text)
+		ORDER BY min(rr.office_sort_order_snapshot),max(rr.office_name_snapshot)`, date, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +321,8 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 		x.People = map[string][]string{}
 		x.PeopleDetails = map[string][]hiredDetail{}
 		x.Contributions = map[string][]cellContribution{}
+		x.Contributions["openVacancies"] = []cellContribution{{Name: "Общее значение", Value: float64(x.OpenVacancies)}}
+		x.Contributions["plannedReserve"] = []cellContribution{{Name: "Общее значение", Value: float64(x.PlannedReserve)}}
 		out = append(out, x)
 	}
 	if err = q.Err(); err != nil {
@@ -338,7 +333,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 		byOffice[out[i].OfficeID] = &out[i]
 	}
 	details, err := a.db.Query(ctx, `WITH hc AS (SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-		SELECT rr.office_id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username),
+		SELECT COALESCE(rr.debtster_department_id::text,rr.office_id::text),COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username),
 		rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
 		COALESCE(hc.n,0),rr.dismissed_workers
@@ -374,7 +369,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	if err = details.Err(); err != nil {
 		return nil, err
 	}
-	hiredRows, err := a.db.Query(ctx, `SELECT rr.office_id,hw.full_name,hw.position,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
+	hiredRows, err := a.db.Query(ctx, `SELECT COALESCE(rr.debtster_department_id::text,rr.office_id::text),hw.full_name,hw.position,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
 		JOIN hired_workers hw ON hw.report_row_id=rr.id
@@ -396,7 +391,7 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	if err = hiredRows.Err(); err != nil {
 		return nil, err
 	}
-	peopleRows, err := a.db.Query(ctx, `SELECT rr.office_id,p.category,p.full_name,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
+	peopleRows, err := a.db.Query(ctx, `SELECT COALESCE(rr.debtster_department_id::text,rr.office_id::text),p.category,p.full_name,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		LEFT JOIN employees e ON e.id=u.employee_id JOIN report_rows rr ON rr.report_id=rp.id
 		JOIN report_row_people p ON p.report_row_id=rr.id
@@ -418,32 +413,13 @@ func (a *App) loadAggregateRows(ctx context.Context, date, ownerID string, plan 
 	if err = peopleRows.Err(); err != nil {
 		return nil, err
 	}
-	shared, err := a.db.Query(ctx, `SELECT ds.office_id,CASE WHEN u.active THEN COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(ds.updated_by_name_snapshot,''),u.username) ELSE '' END,ds.open_vacancies,ds.planned_reserve FROM daily_office_shared ds LEFT JOIN users u ON u.id=ds.updated_by_user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE ds.report_date=$1`, date)
-	if err != nil {
-		return nil, err
-	}
-	defer shared.Close()
-	for shared.Next() {
-		var officeID, name string
-		var openVacancies, plannedReserve int
-		if err = shared.Scan(&officeID, &name, &openVacancies, &plannedReserve); err != nil {
-			return nil, err
-		}
-		if name == "" {
-			name = "Общее значение"
-		}
-		if row := byOffice[officeID]; row != nil {
-			row.Contributions["openVacancies"] = []cellContribution{{Name: name, Value: float64(openVacancies)}}
-			row.Contributions["plannedReserve"] = []cellContribution{{Name: name, Value: float64(plannedReserve)}}
-		}
-	}
-	return out, shared.Err()
+	return out, nil
 }
 
 func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error) {
-	q, err := a.db.Query(ctx, `SELECT rr.id,o.id,COALESCE(NULLIF(rr.office_name_snapshot,''),o.name),COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),rr.open_vacancies,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency,
+	q, err := a.db.Query(ctx, `SELECT rr.id,COALESCE(rr.debtster_department_id::text,rr.office_id::text),rr.office_name_snapshot,rr.office_sort_order_snapshot,rr.open_vacancies,rr.planned_reserve,rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,rr.efficiency,
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
-		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id JOIN offices o ON o.id=rr.office_id WHERE rr.report_id=$1 ORDER BY COALESCE(NULLIF(rr.office_sort_order_snapshot,0),o.sort_order),COALESCE(NULLIF(rr.office_name_snapshot,''),o.name)`, reportID)
+		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id WHERE rr.report_id=$1 ORDER BY rr.office_sort_order_snapshot,rr.office_name_snapshot`, reportID)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +427,7 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 	out := []reportRow{}
 	for q.Next() {
 		var x reportRow
-		if err = q.Scan(&x.ID, &x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &x.Efficiency, &x.EfficiencyPlan); err != nil {
+		if err = q.Scan(&x.ID, &x.OfficeID, &x.OfficeName, &x.SortOrder, &x.OpenVacancies, &x.PlannedReserve, &x.InvitedCandidates, &x.InterviewedCandidates, &x.Interns, &x.ReserveCandidates, &x.DismissedWorkers, &x.Efficiency, &x.EfficiencyPlan); err != nil {
 			return nil, err
 		}
 		x.Efficiency = Efficiency(x.InterviewedCandidates, x.EfficiencyPlan)
@@ -543,7 +519,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 	}
 	var officeID, reportDate string
 	var plan int
-	if err = tx.QueryRow(ctx, `SELECT rr.office_id,rp.report_date::text,
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(rr.debtster_department_id::text,rr.office_id::text),rp.report_date::text,
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
@@ -552,15 +528,18 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	eff := Efficiency(in.InterviewedCandidates, plan)
-	_, err = tx.Exec(ctx, `INSERT INTO daily_office_shared(report_date,office_id,open_vacancies,planned_reserve,updated_by_user_id,updated_by_name_snapshot)
-		SELECT $1,$2,$3,$4,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
-		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$5
-		ON CONFLICT(report_date,office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,planned_reserve=EXCLUDED.planned_reserve,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`, reportDate, officeID, in.OpenVacancies, in.PlannedReserve, claims.UserID)
+	_, err = tx.Exec(ctx, `UPDATE report_rows target
+		SET open_vacancies=$2,planned_reserve=$3,updated_at=now()
+		FROM reports target_report,report_rows source
+		WHERE source.id=$1 AND target.report_id=target_report.id AND target_report.report_date=$4
+		AND ((source.debtster_department_id IS NOT NULL AND target.debtster_department_id=source.debtster_department_id)
+		  OR (source.debtster_department_id IS NULL AND target.debtster_department_id IS NULL AND target.office_id=source.office_id))`,
+		r.PathValue("id"), in.OpenVacancies, in.PlannedReserve, reportDate)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	tag, err := tx.Exec(ctx, `UPDATE report_rows rr SET open_vacancies=$2,invited_candidates=$3,interviewed_candidates=$4,interns=$5,reserve_candidates=$6,dismissed_workers=$7,efficiency=$8,updated_at=now() FROM reports r WHERE rr.report_id=r.id AND rr.id=$1 AND r.status='draft' AND r.owner_user_id=$9 AND r.report_date::text=$10`, r.PathValue("id"), 0, in.InvitedCandidates, in.InterviewedCandidates, in.Interns, in.ReserveCandidates, in.DismissedWorkers, eff, claims.UserID, reportDate)
+	tag, err := tx.Exec(ctx, `UPDATE report_rows rr SET invited_candidates=$2,interviewed_candidates=$3,interns=$4,reserve_candidates=$5,dismissed_workers=$6,efficiency=$7,updated_at=now() FROM reports r WHERE rr.report_id=r.id AND rr.id=$1 AND r.status='draft' AND r.owner_user_id=$8 AND r.report_date::text=$9`, r.PathValue("id"), in.InvitedCandidates, in.InterviewedCandidates, in.Interns, in.ReserveCandidates, in.DismissedWorkers, eff, claims.UserID, reportDate)
 	if err != nil {
 		serverError(w, err)
 		return

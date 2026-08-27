@@ -35,6 +35,7 @@ func main() {
 
 	cfg := app.Config{
 		DatabaseURL: require("DATABASE_URL"),
+		DebtsterAPI: require("DEBTSTER_API"),
 		HTTPAddr:    require("HTTP_ADDR"),
 		StaticDir:   require("STATIC_DIR"),
 		AppSecret:   require("APP_SECRET"),

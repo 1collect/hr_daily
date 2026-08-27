@@ -67,6 +67,13 @@ cd web && npm install && npm run build
 docker compose run --rm backend /app/hr-server migrate
 ```
 
+Перед миграцией и запуском можно отдельно проверить доступность Debtster API. Команда
+ничего не записывает в базу данных и выводит количество полученных РП:
+
+```bash
+docker compose run --rm backend /app/hr-server check-debtster
+```
+
 Выполненные версии и их контрольные суммы хранятся в таблице `schema_migrations`; SQL-файлы
 встроены в Go-бинарник. Имя внутренней Docker-сети задаётся обязательной переменной
 `DOCKER_NETWORK`.

@@ -65,3 +65,19 @@ func TestShouldSyncDebtsterDepartmentsOnlyForCurrentDate(t *testing.T) {
 		t.Fatal("Debtster sync enabled before 2026-08-28")
 	}
 }
+
+func TestCheckDebtsterAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":12,"name":"rp_almaty","display_name":"РП Алматы"},{"id":18,"name":"rp_astana","display_name":"РП Астана"}]}`))
+	}))
+	defer server.Close()
+
+	count, err := CheckDebtsterAPI(context.Background(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("got %d departments, want 2", count)
+	}
+}

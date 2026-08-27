@@ -17,20 +17,30 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if len(os.Args) == 2 && os.Args[1] == "migrate" {
-		db, err := pgxpool.New(ctx, require("DATABASE_URL"))
-		if err != nil {
-			log.Fatal(err)
+	if len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "migrate":
+			db, err := pgxpool.New(ctx, require("DATABASE_URL"))
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer db.Close()
+			if err = migrations.Up(ctx, db); err != nil {
+				log.Fatalf("migrations: %v", err)
+			}
+			log.Print("database migrations applied")
+			return
+		case "check-debtster":
+			count, err := app.CheckDebtsterAPI(ctx, require("DEBTSTER_API"))
+			if err != nil {
+				log.Fatalf("Debtster API check failed: %v", err)
+			}
+			log.Printf("Debtster API check passed: %d departments received", count)
+			return
 		}
-		defer db.Close()
-		if err = migrations.Up(ctx, db); err != nil {
-			log.Fatalf("migrations: %v", err)
-		}
-		log.Print("database migrations applied")
-		return
 	}
 	if len(os.Args) != 1 {
-		log.Fatalf("usage: %s [migrate]", os.Args[0])
+		log.Fatalf("usage: %s [migrate|check-debtster]", os.Args[0])
 	}
 
 	cfg := app.Config{

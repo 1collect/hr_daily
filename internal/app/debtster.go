@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -22,6 +23,16 @@ func usesDebtsterDepartments(date string) bool {
 
 func shouldSyncDebtsterDepartments(date, today string) bool {
 	return date == today && usesDebtsterDepartments(date)
+}
+
+// CheckDebtsterAPI verifies that the configured Debtster endpoint is reachable
+// and returns a valid department list without changing application data.
+func CheckDebtsterAPI(ctx context.Context, baseURL string) (int, error) {
+	departments, err := fetchDebtsterDepartments(ctx, &http.Client{Timeout: 10 * time.Second}, baseURL)
+	if err != nil {
+		return 0, err
+	}
+	return len(departments), nil
 }
 
 type debtsterDepartment struct {

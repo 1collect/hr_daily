@@ -81,6 +81,38 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	}
 }
 
+func TestApplyDebtsterExportSnapshotUsesFinalDateCounts(t *testing.T) {
+	rows := []exportSummaryRow{
+		{DebtsterDepartmentID: 12, OpenVacancies: 90, Interns: 80, PlannedReserve: 70},
+		{DebtsterDepartmentID: 18, OpenVacancies: 9, Interns: 8, PlannedReserve: 7},
+		{Office: "  РП АЛМАТЫ ", OpenVacancies: 60, Interns: 50, PlannedReserve: 40},
+	}
+	sections := []employeeExportSection{{Rows: []exportSummaryRow{
+		{DebtsterDepartmentID: 12, OpenVacancies: 60, Interns: 50, PlannedReserve: 40},
+	}}}
+	snapshot := []debtsterVacancyReport{{
+		ID:                     12,
+		RP:                     "РП Алматы",
+		VacantPositionsCount:   3,
+		TraineesCount:          4,
+		PlannedDismissalsCount: 5,
+		PlannedDismissals: []debtsterPlannedDismissal{{
+			FirstName: "Не должен попасть в XLSX",
+		}},
+	}}
+
+	applyDebtsterExportSnapshot(rows, sections, snapshot)
+
+	for _, item := range []exportSummaryRow{rows[0], rows[2], sections[0].Rows[0]} {
+		if item.OpenVacancies != 3 || item.Interns != 4 || item.PlannedReserve != 5 {
+			t.Fatalf("Debtster values were not applied: %#v", item)
+		}
+	}
+	if rows[1].OpenVacancies != 0 || rows[1].Interns != 0 || rows[1].PlannedReserve != 0 {
+		t.Fatalf("stale stored values remained without a matching Debtster snapshot: %#v", rows[1])
+	}
+}
+
 func TestCleanPeople(t *testing.T) {
 	got := cleanPeople(map[string][]string{
 		"invited_candidates": {"  Иванов Иван  ", " ", "Петров Пётр"},

@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/xuri/excelize/v2"
 )
 
 type exportSummaryRow struct {
 	Office                                                                                        string
+	DebtsterDepartmentID                                                                          int
 	OpenVacancies, Invited, Interviewed, Interns, PlannedReserve, Reserve, Hired, Plan, TotalPlan int
 	Responsible                                                                                   string
 }
@@ -66,6 +68,15 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	if reportType == "main_office" || reportType == "all" {
 		kinds = append(kinds, exportKinds["main_office"])
 	}
+	var debtsterSnapshot []debtsterVacancyReport
+	if reportType == "rp" || reportType == "all" {
+		var err error
+		debtsterSnapshot, err = fetchDebtsterVacancies(r.Context(), a.httpClient, a.debtsterAPI, to)
+		if err != nil {
+			serverError(w, fmt.Errorf("read Debtster export snapshot for %s: %w", to, err))
+			return
+		}
+	}
 
 	f := excelize.NewFile()
 	styles := newExportStyles(f)
@@ -74,6 +85,9 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			serverError(w, err)
 			return
+		}
+		if kind.Kind == "rp" {
+			applyDebtsterExportSnapshot(rows, sections, debtsterSnapshot)
 		}
 		if index == 0 {
 			f.SetSheetName("Sheet1", kind.Sheet)
@@ -95,6 +109,45 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="HR_%s_%s.xlsx"`, from, to))
 	_, _ = w.Write(buf.Bytes())
+}
+
+// applyDebtsterExportSnapshot replaces the RP values that are no longer entered
+// manually with the Debtster snapshot for the export period's final date. The
+// planned dismissal names are intentionally not copied to the export model.
+func applyDebtsterExportSnapshot(rows []exportSummaryRow, sections []employeeExportSection, snapshot []debtsterVacancyReport) {
+	byDepartment := make(map[int]debtsterVacancyReport, len(snapshot))
+	byOfficeName := make(map[string]debtsterVacancyReport, len(snapshot))
+	for _, item := range snapshot {
+		byDepartment[item.ID] = item
+		if name := normalizeExportOfficeName(item.RP); name != "" {
+			byOfficeName[name] = item
+		}
+	}
+	apply := func(items []exportSummaryRow) {
+		for index := range items {
+			item, exists := byDepartment[items[index].DebtsterDepartmentID]
+			if !exists {
+				item, exists = byOfficeName[normalizeExportOfficeName(items[index].Office)]
+			}
+			if !exists {
+				items[index].OpenVacancies = 0
+				items[index].Interns = 0
+				items[index].PlannedReserve = 0
+				continue
+			}
+			items[index].OpenVacancies = item.VacantPositionsCount
+			items[index].Interns = item.TraineesCount
+			items[index].PlannedReserve = item.PlannedDismissalsCount
+		}
+	}
+	apply(rows)
+	for index := range sections {
+		apply(sections[index].Rows)
+	}
+}
+
+func normalizeExportOfficeName(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
 }
 
 func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, to string) ([]exportSummaryRow, []employeeExportSection, error) {
@@ -215,7 +268,7 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 		LEFT JOIN employees e ON e.id=u.employee_id WHERE rp.report_date BETWEEN $1 AND $2) planned`
 	summary, err := a.db.Query(ctx, `WITH relevant_reports AS (`+relevant+`), hc AS (
 		SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-		SELECT max(rr.office_name_snapshot),max(rr.open_vacancies),sum(rr.invited_candidates),sum(rr.interviewed_candidates),
+		SELECT COALESCE(max(rr.debtster_department_id),0),max(rr.office_name_snapshot),max(rr.open_vacancies),sum(rr.invited_candidates),sum(rr.interviewed_candidates),
 		sum(rr.interns),max(rr.planned_reserve),sum(rr.reserve_candidates),sum(COALESCE(hc.n,0)),
 		sum(rp.efficiency_plan),max(rp.total_efficiency_plan),
 		COALESCE(string_agg(DISTINCT rp.owner_name,', ' ORDER BY rp.owner_name) FILTER (WHERE rr.invited_candidates>0 OR rr.interviewed_candidates>0 OR rr.interns>0 OR rr.reserve_candidates>0 OR COALESCE(hc.n,0)>0),'')
@@ -228,7 +281,7 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 	rows := []exportSummaryRow{}
 	for summary.Next() {
 		var item exportSummaryRow
-		if err = summary.Scan(&item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Hired, &item.Plan, &item.TotalPlan, &item.Responsible); err != nil {
+		if err = summary.Scan(&item.DebtsterDepartmentID, &item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Hired, &item.Plan, &item.TotalPlan, &item.Responsible); err != nil {
 			summary.Close()
 			return nil, nil, err
 		}
@@ -241,7 +294,7 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 	summary.Close()
 	employeeRows, err := a.db.Query(ctx, `WITH relevant_reports AS (`+relevant+`), hc AS (
 		SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
-		SELECT rp.owner_user_id::text,rp.owner_name,max(rr.office_name_snapshot),max(rr.open_vacancies),
+		SELECT rp.owner_user_id::text,rp.owner_name,COALESCE(max(rr.debtster_department_id),0),max(rr.office_name_snapshot),max(rr.open_vacancies),
 		sum(rr.invited_candidates),sum(rr.interviewed_candidates),sum(rr.interns),max(rr.planned_reserve),
 		sum(rr.reserve_candidates),sum(COALESCE(hc.n,0)),sum(rp.efficiency_plan),max(rp.owner_efficiency_plan)
 		FROM relevant_reports rp JOIN report_rows rr ON rr.report_id=rp.id LEFT JOIN hc ON hc.report_row_id=rr.id
@@ -255,7 +308,7 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 	for employeeRows.Next() {
 		var employeeID, employeeName string
 		var item exportSummaryRow
-		if err = employeeRows.Scan(&employeeID, &employeeName, &item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Hired, &item.Plan, &item.TotalPlan); err != nil {
+		if err = employeeRows.Scan(&employeeID, &employeeName, &item.DebtsterDepartmentID, &item.Office, &item.OpenVacancies, &item.Invited, &item.Interviewed, &item.Interns, &item.PlannedReserve, &item.Reserve, &item.Hired, &item.Plan, &item.TotalPlan); err != nil {
 			employeeRows.Close()
 			return nil, nil, err
 		}

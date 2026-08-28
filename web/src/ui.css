@@ -154,7 +154,7 @@ body{
 .brand-mark{
   flex-basis:38px;
   height:38px;
-  border-radius:10px;
+  border-radius:6px;
   background:linear-gradient(145deg,#4b7cf0,#285bd7);
   box-shadow:0 8px 20px rgba(28,77,187,.35),inset 0 1px rgba(255,255,255,.25);
 }
@@ -167,7 +167,7 @@ nav{gap:4px;margin-top:8px}
   height:44px;
   gap:11px;
   padding:0 12px;
-  border-radius:8px;
+  border-radius:5px;
   color:#aebed1;
   transition:background var(--ease),color var(--ease),transform var(--ease);
 }
@@ -185,7 +185,7 @@ nav{gap:4px;margin-top:8px}
   margin-top:auto;
   padding:0 12px;
   border:1px solid rgba(255,255,255,.07);
-  border-radius:10px;
+  border-radius:5px;
   background:rgba(255,255,255,.035);
   color:#91a8c2;
 }
@@ -215,7 +215,7 @@ header{
   margin-left:10px;
   padding:0 13px;
   border-color:var(--line);
-  border-radius:10px;
+  border-radius:5px;
   background:var(--surface-muted);
   color:#5d6a7d;
 }
@@ -226,7 +226,7 @@ header{
   height:38px;
   padding:0 11px;
   border-color:var(--line-strong);
-  border-radius:9px;
+  border-radius:5px;
   background:#fff;
   transition:border var(--ease),box-shadow var(--ease),background var(--ease);
 }
@@ -236,7 +236,7 @@ header{
 .btn{
   height:38px;
   padding:0 13px;
-  border-radius:9px;
+  border-radius:5px;
   font-size:13px;
   font-weight:610;
   transition:background var(--ease),border var(--ease),color var(--ease),box-shadow var(--ease),transform var(--ease);
@@ -248,7 +248,7 @@ header{
 .btn-danger{border-color:#f1c5c5;background:#fff;color:var(--danger)}
 .btn-danger:hover{border-color:#eaa7a7;background:#fff4f4;color:#bd3131}
 .icon-btn{width:40px}
-.save-state{height:34px;padding:0 10px;border-radius:17px;background:#f7f9fc;font-size:12px}
+.save-state{height:34px;padding:0 10px;border-radius:5px;background:#f7f9fc;font-size:12px}
 .save-state:before{width:7px;height:7px}
 
 /* Report workspace */
@@ -260,14 +260,14 @@ body.report-page{--header-h:58px}
   min-height:var(--toolbar-h);
   padding:7px 10px;
   border-color:rgba(207,216,230,.9);
-  border-radius:14px;
+  border-radius:6px;
   background:rgba(255,255,255,.94);
   box-shadow:var(--shadow-sm);
 }
-.date-switcher{height:38px;border-color:var(--line-strong);border-radius:9px;box-shadow:inset 0 1px #fff}
+.date-switcher{height:38px;border-color:var(--line-strong);border-radius:5px;box-shadow:inset 0 1px #fff}
 .report-date-button{height:36px;width:150px;padding:0 11px;font-weight:560}
 .report-workspace .toolbar .btn{height:38px}
-.report-workspace select{height:38px;min-width:230px;border-radius:9px;font-size:13px}
+.report-workspace select{height:38px;min-width:230px;border-radius:5px;font-size:13px}
 .sheet-wrap{
   height:calc(100vh - var(--header-h) - var(--toolbar-h) - var(--workspace-gap));
   margin-top:0;
@@ -277,7 +277,7 @@ body.report-page{--header-h:58px}
 .sheet{
   overflow:hidden;
   border:1px solid var(--line-strong);
-  border-radius:14px;
+  border-radius:6px;
   background:#fff;
   box-shadow:var(--shadow-sm);
   font-size:14px;
@@ -316,11 +316,11 @@ body.report-page{--header-h:58px}
 /* Data pages and cards */
 .card{
   border-color:rgba(207,216,230,.9);
-  border-radius:16px;
+  border-radius:6px;
   background:rgba(255,255,255,.96);
   box-shadow:var(--shadow-sm);
 }
-.admin-card{max-width:1500px;border-radius:16px}
+.admin-card{max-width:1500px;border-radius:6px}
 .admin-card .card-head{
   min-height:82px;
   padding:16px 20px;
@@ -329,7 +329,7 @@ body.report-page{--header-h:58px}
 }
 .list-heading{gap:4px}.list-heading h2{font-size:18px;font-weight:720;letter-spacing:-.015em}.list-heading span{font-size:12px}
 .page-actions{gap:10px}.page-actions>.btn{height:42px;padding-inline:16px}
-.table-search{height:42px;border-radius:10px;background:#f9fbfd}
+.table-search{height:42px;border-radius:5px;background:#f9fbfd}
 .table-search:focus-within{background:#fff;box-shadow:0 0 0 4px rgba(53,106,230,.09)}
 .data-table{font-size:13px}
 .admin-card .data-table th{
@@ -346,41 +346,41 @@ body.report-page{--header-h:58px}
 .data-table tbody tr:hover td{background:#f7faff}
 .data-table .primary-cell{font-weight:650}
 .login-value{color:#526176;font-size:12px}
-.state-badge{padding:5px 10px;border-radius:14px;font-size:11px}
-.admin-card .role-badge{height:27px;padding:0 10px;font-size:11px}
-.sort-value{width:36px;height:30px;border-radius:8px;background:#eef3f8}
+.state-badge{padding:5px 10px;border-radius:4px;font-size:11px}
+.admin-card .role-badge{height:27px;padding:0 10px;border-radius:4px;font-size:11px}
+.sort-value{width:36px;height:30px;border-radius:4px;background:#eef3f8}
 .filter-empty{padding:56px}
 
 /* Export */
-.export-panel{max-width:1060px;border-radius:16px}
+.export-panel{max-width:1060px;border-radius:6px}
 .export-panel .card-head{min-height:76px;padding:16px 22px}
 .export-panel .card-head h2{font-size:18px;font-weight:720}
 .export-panel .panel-body{padding:26px 28px}
 .export-form{grid-template-columns:1.15fr 1fr 1fr;gap:18px;margin-bottom:24px}
 .export-form .input,.export-form select{height:44px}
-.export-note{position:relative;gap:6px;padding:17px 18px 17px 46px;border:1px solid var(--line);border-radius:12px;background:#f9fbfe}
+.export-note{position:relative;gap:6px;padding:17px 18px 17px 46px;border:1px solid var(--line);border-radius:5px;background:#f9fbfe}
 .export-note+.export-note{margin-top:10px}
-.export-note:before{content:"✓";position:absolute;left:17px;top:18px;width:20px;height:20px;display:grid;place-items:center;border-radius:7px;background:#e5efff;color:var(--primary);font-size:12px;font-weight:800}
+.export-note:before{content:"✓";position:absolute;left:17px;top:18px;width:20px;height:20px;display:grid;place-items:center;border-radius:4px;background:#e5efff;color:var(--primary);font-size:12px;font-weight:800}
 .export-note b{font-size:13px}.export-note span{font-size:12px}
-.panel-actions{padding:15px 22px;border-radius:0 0 16px 16px;background:#fbfcfe}
+.panel-actions{padding:15px 22px;border-radius:0 0 6px 6px;background:#fbfcfe}
 .panel-actions .btn{height:42px}
 
 /* Modals and editors */
 .modal-backdrop{padding:24px;background:rgba(14,31,55,.48);backdrop-filter:blur(5px)}
 .modal{
   border:1px solid rgba(207,216,230,.9);
-  border-radius:16px;
+  border-radius:7px;
   box-shadow:0 28px 80px rgba(13,31,56,.25),0 3px 12px rgba(13,31,56,.08);
 }
 .modal-head{flex-basis:62px;padding:0 20px}.modal-head h2{font-size:17px;font-weight:720;letter-spacing:-.01em}
-.close{width:36px;height:36px;border-radius:10px;color:#718096}.close:hover{background:#eef3f8}
-.modal-body{padding:20px}.modal-foot{flex-basis:66px;padding:0 20px;border-radius:0 0 16px 16px;background:#fafbfd}.modal-foot .btn{height:40px}
-.modal-intro{gap:5px;margin-bottom:16px;padding:14px 16px;border:1px solid #e2e9f3;border-radius:11px;background:#f6f9fd}
+.close{width:36px;height:36px;border-radius:4px;color:#718096}.close:hover{background:#eef3f8}
+.modal-body{padding:20px}.modal-foot{flex-basis:66px;padding:0 20px;border-radius:0 0 7px 7px;background:#fafbfd}.modal-foot .btn{height:40px}
+.modal-intro{gap:5px;margin-bottom:16px;padding:14px 16px;border:1px solid #e2e9f3;border-radius:5px;background:#f6f9fd}
 .modal-intro b{font-size:14px}.modal-intro span{font-size:12px}
-.form-section{padding:18px;border-radius:12px;background:#fbfcfe}.form-section+.form-section{margin-top:14px}
+.form-section{padding:18px;border-radius:5px;background:#fbfcfe}.form-section+.form-section{margin-top:14px}
 .form-section-head{margin-bottom:17px}.user-form .input,.user-form select,.office-form .input{height:44px}
-.hire-row{gap:9px;margin-bottom:9px}.hire-index{height:40px;border-radius:9px}.hire-row .input{height:40px}.remove-hire{height:40px;width:40px;border-radius:9px}
-.add-row-button{height:42px;margin-top:7px;border-radius:10px;background:#f6f9ff}
+.hire-row{gap:9px;margin-bottom:9px}.hire-index{height:40px;border-radius:4px}.hire-row .input{height:40px}.remove-hire{height:40px;width:40px;border-radius:4px}
+.add-row-button{height:42px;margin-top:7px;border-radius:5px;background:#f6f9ff}
 
 /* Login */
 .login-screen{
@@ -396,12 +396,12 @@ body.report-page{--header-h:58px}
   width:440px;
   padding:34px;
   border:1px solid rgba(255,255,255,.8);
-  border-radius:20px;
+  border-radius:8px;
   background:rgba(255,255,255,.94);
   box-shadow:0 30px 80px rgba(32,57,91,.16),0 2px 8px rgba(32,57,91,.05);
   backdrop-filter:blur(18px);
 }
-.login-brand{padding-bottom:24px}.login-brand .brand-mark{border-radius:11px}.login-copy{margin:28px 0 24px}.login-copy h1{font-size:25px;font-weight:750;letter-spacing:-.025em}.login-copy p{font-size:13px}.login-card .input,.login-submit{height:46px}.login-card .input{border-radius:10px}.login-submit{margin-top:8px;border-radius:10px}
+.login-brand{padding-bottom:24px}.login-brand .brand-mark{border-radius:6px}.login-copy{margin:28px 0 24px}.login-copy h1{font-size:25px;font-weight:750;letter-spacing:-.025em}.login-copy p{font-size:13px}.login-card .input,.login-submit{height:46px}.login-card .input{border-radius:5px}.login-submit{margin-top:8px;border-radius:5px}
 
 @media(max-width:1100px){
   :root{--sidebar-w:82px}
@@ -423,12 +423,26 @@ body.report-page{--header-h:58px}
   header{height:64px;padding:0 15px}.page-heading h1{font-size:17px}.page-heading p{display:none}.profile>span{width:34px;height:34px}.header-action{width:38px;padding:0}.header-action span{display:none}
   #content{height:calc(100vh - 134px);padding:16px}
   #content.report-workspace{height:calc(100vh - 134px)}
-  .report-workspace .toolbar{max-width:calc(100% - 20px);padding:8px;border-radius:11px}.report-workspace select{min-width:150px}
+  .report-workspace .toolbar{max-width:calc(100% - 20px);padding:8px;border-radius:6px}.report-workspace select{min-width:150px}
   .sheet-wrap{height:calc(100vh - 134px - var(--toolbar-h) - var(--workspace-gap) - 10px);padding-inline:10px}
   .admin-card .card-head{align-items:stretch;flex-direction:column;padding:16px}.page-actions{display:grid;grid-template-columns:1fr auto}.page-actions select{grid-column:1/-1}.table-search{width:100%}
   .admin-card .data-table th,.admin-card .data-table td{padding-inline:12px}
   .export-form{grid-template-columns:1fr}.export-panel .panel-body{padding:18px}
-  .modal-backdrop{padding:10px}.modal{max-height:calc(100vh - 20px);border-radius:14px}.modal-hint{display:none}.modal-body{padding:15px}
+  .modal-backdrop{padding:10px}.modal{max-height:calc(100vh - 20px);border-radius:7px}.modal-hint{display:none}.modal-body{padding:15px}
   .person-grid,.access-grid,.plan-grid,.office-grid{grid-template-columns:1fr}
-  .login-card{width:min(420px,calc(100vw - 28px));padding:26px;border-radius:17px}
+  .login-card{width:min(420px,calc(100vw - 28px));padding:26px;border-radius:8px}
 }
+
+/* Strict corporate corners; circles are reserved for people and status dots. */
+.date-picker{border-radius:5px}
+.calendar-nav,.calendar-day{border-radius:4px}
+.toast{border-radius:6px}
+.toast-close{border-radius:4px}
+.status-pill,.role-badge,.plan-empty{border-radius:4px}
+.summary-count,.hired-group,.summary-total{border-radius:5px}
+.owner-avatar{border-radius:6px}
+.owner-count,.hire-number{border-radius:4px}
+.daily-plan-row,.access-intro,.access-current,.access-check,.scheduled-plan{border-radius:5px}
+.access-section-head>span{border-radius:4px}
+.active-switch{border-radius:5px}
+.scheduled-plan button{border-radius:4px}

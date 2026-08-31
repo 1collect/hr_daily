@@ -49,7 +49,7 @@ let currentUser:User|null=null,adminUsers:User[]=[];
 let selectedEmployee='';
 let reportSocket:WebSocket|null=null,reportRefreshTimer=0;
 const dirtyRows=new Set<string>();
-const defaultColumnWidths:Record<string,number>={office:200,staffPositionsCount:140,vacantPositionsCount:145,traineesCount:125,recruitmentCount:145,plannedDismissalsCount:160,openVacancies:130,invitedCandidates:125,interviewedCandidates:140,interns:125,plannedReserve:125,reserveCandidates:125,hires:125,invitationEfficiency:155,hiringEfficiency:155};
+const defaultColumnWidths:Record<string,number>={office:200,staffPositionsCount:125,vacantPositionsCount:145,traineesCount:145,plannedDismissalsCount:145,openVacancies:130,invitedCandidates:135,interviewedCandidates:145,interns:145,plannedReserve:125,reserveCandidates:135,hires:135,invitationEfficiency:165,hiringEfficiency:165};
 const allColumns=[
   ['office','РП'],['openVacancies','Количество открытых вакансий'],
   ['invitedCandidates','Количество приглашенных кандидатов'],
@@ -60,17 +60,29 @@ const allColumns=[
   ['hiringEfficiency','% исполнения плана по принятым кандидатам']
 ] as const;
 const debtsterColumns=[
-  ['staffPositionsCount','Количество штатных позиций'],
-  ['vacantPositionsCount','Количество вакантных позиций'],
-  ['traineesCount','Количество стажёров'],
-  ['recruitmentCount','Количество сотрудников в подборе'],
+  ['staffPositionsCount','Штат'],
+  ['vacantPositionsCount','Количество открытых вакансий'],
+  ['traineesCount','Количество кандидатов на стажировке'],
   ['plannedDismissalsCount','Планируемый резерв']
+] as const;
+const rpColumns=[
+  ['office','РП'],
+  ['staffPositionsCount','Штат'],
+  ['vacantPositionsCount','Количество открытых вакансий'],
+  ['invitedCandidates','Количество приглашенных кандидатов'],
+  ['invitationEfficiency','% исполнения плана по приглашенным кандидатам'],
+  ['interviewedCandidates','Количество прошедших собеседование'],
+  ['traineesCount','Количество кандидатов на стажировке'],
+  ['plannedDismissalsCount','Планируемый резерв'],
+  ['reserveCandidates','Количество кандидатов в резерве'],
+  ['hires','Количество принятых работников'],
+  ['hiringEfficiency','% исполнения плана по принятым кандидатам']
 ] as const;
 let columnWidths:Record<string,number>=JSON.parse(localStorage.getItem('hr-column-widths-v2')||'{}');
 type ReportColumn=readonly [string,string];
 const isMainReport=()=>currentPage==='main-report';
-const replacedRPColumns=new Set(['openVacancies','interns','plannedReserve']);
-const reportColumns=():readonly ReportColumn[]=>isMainReport()?allColumns:[allColumns[0],...debtsterColumns,...allColumns.slice(1).filter(([id])=>!replacedRPColumns.has(id))];
+const debtsterColumnIds=new Set<string>(debtsterColumns.map(([id])=>id));
+const reportColumns=():readonly ReportColumn[]=>isMainReport()?allColumns:rpColumns;
 
 function esc(v:unknown){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]!))}
 let tooltipTarget:HTMLElement|null=null,tooltipTimer=0;
@@ -131,10 +143,12 @@ function wireSheetHighlighting(){
  table.addEventListener('focusin',event=>{const cell=(event.target as HTMLElement).closest<HTMLElement>('td[data-col]');if(!cell)return;table.querySelectorAll('.active-column').forEach(el=>el.classList.remove('active-column'));markColumn(cell.dataset.col!,'active-column',true)});
  table.addEventListener('focusout',()=>requestAnimationFrame(()=>{const focused=document.activeElement as HTMLElement|null;if(focused&&table.contains(focused))return;table.querySelectorAll('.active-column').forEach(el=>el.classList.remove('active-column'))}));
 }
-function renderReport(){if(!report)return;const main=isMainReport(),locked=!report.report.editable,visibleNumeric=main?numeric:numeric.filter(([key])=>!replacedRPColumns.has(String(key)));const filtered=adminUsers.find(x=>x.id===selectedEmployee),isPast=reportDate<today(),isFuture=reportDate>today(),accessCount=report.report.accessCount||0;const accessButton=manager()&&reportDate!==today()?`<button class="btn btn-outline with-icon report-access-button ${accessCount?'has-access':''}" id="report-access" ${isFuture?'disabled title="Доступ нельзя открыть до наступления выбранной даты"':''}>${icons.access}<span>${accessCount?`Доступ открыт · ${accessCount}`:'Открыть доступ'}</span></button>`:'';const debtsterHeads=main?'':debtsterColumns.map(([key,label])=>headerCell(key,label)).join(''),debtsterTotals=main?'':debtsterColumns.map(([key])=>`<td data-col="${key}" data-total="${key}">0</td>`).join('');content.innerHTML=`
+function reportBodyCell(r:Row,rowLocked:boolean,id:string){if(id==='office')return `<td data-col="office" class="${colClass('office')}">${esc(r.officeName)}</td>`;if(debtsterColumnIds.has(id))return `<td data-col="${id}">${debtsterCell(r,id)}</td>`;if(id==='hires')return `<td data-col="hires" class="${colClass('hires')}" data-tooltip="${esc(contributionTooltip(r,'hiredWorkers',r.hiredWorkers.length))}">${hiredCell(r,rowLocked)}</td>`;if(id==='invitationEfficiency')return `<td data-col="invitationEfficiency">${planEfficiencyCell(r,'invitation')}</td>`;if(id==='hiringEfficiency')return `<td data-col="hiringEfficiency">${planEfficiencyCell(r,'hiring')}</td>`;const key=id as keyof Row,value=Number(r[key]||0);return `<td data-col="${id}" class="${colClass(id)}" data-tooltip="${esc(contributionTooltip(r,id,value))}">${isPeopleKey(id)?peopleCell(r,id,rowLocked):`<input class="cell nav-cell" type="text" inputmode="numeric" pattern="[0-9]*" data-key="${id}" data-original="${value}" value="${value}" ${rowLocked?'disabled':''}>`}</td>`}
+function reportTotalCell(id:string){if(id==='office')return `<td data-col="office" class="${colClass('office')}">ИТОГО</td>`;if(id==='invitationEfficiency'||id==='hiringEfficiency')return `<td data-col="${id}" data-total="${id}">0.0%</td>`;const total=id==='hires'?'hiredWorkers':id;return `<td data-col="${id}" class="${colClass(id)}" data-total="${total}">0</td>`}
+function renderReport(){if(!report)return;const main=isMainReport(),columns=reportColumns(),locked=!report.report.editable,filtered=adminUsers.find(x=>x.id===selectedEmployee),isPast=reportDate<today(),isFuture=reportDate>today(),accessCount=report.report.accessCount||0;const accessButton=manager()&&reportDate!==today()?`<button class="btn btn-outline with-icon report-access-button ${accessCount?'has-access':''}" id="report-access" ${isFuture?'disabled title="Доступ нельзя открыть до наступления выбранной даты"':''}>${icons.access}<span>${accessCount?`Доступ открыт · ${accessCount}`:'Открыть доступ'}</span></button>`:'';content.innerHTML=`
  <div class="toolbar"><div class="date-switcher"><button class="btn icon-btn" id="prev-day" aria-label="Предыдущий рабочий день">${icons.left}</button><button class="report-date-button" id="report-date" type="button" aria-haspopup="dialog" aria-label="Выбрать дату отчёта"><span>${displayDate(reportDate)}</span>${icons.calendar}</button><button class="btn icon-btn" id="next-day" aria-label="Следующий рабочий день">${icons.right}</button></div>${manager()?`<select id="employee-filter">${reportEmployeeOptions()}</select><button class="btn btn-outline" id="daily-plan-summary">Планы на день</button>`:''}${locked&&!manager()?'<span class="readonly-note">Доступ закрыт</span>':''}${!locked?'<span id="save-state" class="save-state saved">Сохранено</span>':''}<div class="spacer"></div>${accessButton}<button class="btn btn-outline icon-btn" id="reset-column-widths" title="Сбросить ширину колонок" aria-label="Сбросить ширину колонок" ${hasCustomColumnWidths()?'':'hidden'}>${icons.reset}</button></div>
- <div class="sheet-wrap"><table class="sheet ${manager()?'manager-sheet':''}" style="width:${tableWidth()}px"><colgroup>${reportColumns().map(([id])=>`<col data-col="${id}" class="${colClass(id)}" style="width:${colWidth(id)}px">`).join('')}</colgroup><thead><tr>${headerCell('office',main?'Компания':'РП')}${debtsterHeads}${visibleNumeric.map(([k,label])=>headerCell(String(k),label)).join('')}${headerCell('hires','Количество принятых работников')}${headerCell('invitationEfficiency','% исполнения плана по приглашенным кандидатам')}${headerCell('hiringEfficiency','% исполнения плана по принятым кандидатам')}</tr></thead><tbody>
- ${report.rows.map((r,ri)=>{const rowLocked=locked||!r.id;return `<tr data-row="${ri}"><td data-col="office" class="${colClass('office')}">${esc(r.officeName)}</td>${main?'':debtsterColumns.map(([key])=>`<td data-col="${key}">${debtsterCell(r,key)}</td>`).join('')}${visibleNumeric.map(([k])=>`<td data-col="${k}" class="${colClass(String(k))}" data-tooltip="${esc(contributionTooltip(r,String(k),Number(r[k])))}">${isPeopleKey(k)?peopleCell(r,k,rowLocked):`<input class="cell nav-cell" type="text" inputmode="numeric" pattern="[0-9]*" data-key="${k}" data-original="${r[k]}" value="${r[k]}" ${rowLocked?'disabled':''}>`}</td>`).join('')}<td data-col="hires" class="${colClass('hires')}" data-tooltip="${esc(contributionTooltip(r,'hiredWorkers',r.hiredWorkers.length))}">${hiredCell(r,rowLocked)}</td><td data-col="invitationEfficiency">${planEfficiencyCell(r,'invitation')}</td><td data-col="hiringEfficiency">${planEfficiencyCell(r,'hiring')}</td></tr>`}).join('')}</tbody><tfoot><tr><td data-col="office" class="${colClass('office')}">ИТОГО</td>${debtsterTotals}${visibleNumeric.map(([k])=>`<td data-col="${k}" class="${colClass(String(k))}" data-total="${k}">0</td>`).join('')}<td data-col="hires" class="${colClass('hires')}" data-total="hiredWorkers">0</td><td data-col="invitationEfficiency" data-total="invitationEfficiency">0.0%</td><td data-col="hiringEfficiency" data-total="hiringEfficiency">0.0%</td></tr></tfoot></table></div>`;
+ <div class="sheet-wrap"><table class="sheet ${manager()?'manager-sheet':''}" style="width:${tableWidth()}px"><colgroup>${columns.map(([id])=>`<col data-col="${id}" class="${colClass(id)}" style="width:${colWidth(id)}px">`).join('')}</colgroup><thead><tr>${columns.map(([id,label])=>headerCell(id,main&&id==='office'?'Компания':label)).join('')}</tr></thead><tbody>
+ ${report.rows.map((r,ri)=>{const rowLocked=locked||!r.id;return `<tr data-row="${ri}">${columns.map(([id])=>reportBodyCell(r,rowLocked,id)).join('')}</tr>`}).join('')}</tbody><tfoot><tr>${columns.map(([id])=>reportTotalCell(id)).join('')}</tr></tfoot></table></div>`;
  const dateButton=document.querySelector<HTMLButtonElement>('#report-date')!;dateButton.onclick=()=>openDatePicker(dateButton);
  document.querySelector<HTMLButtonElement>('#prev-day')!.onclick=()=>shiftDate(-1);document.querySelector<HTMLButtonElement>('#next-day')!.onclick=()=>shiftDate(1);
  document.querySelector<HTMLButtonElement>('#reset-column-widths')!.onclick=resetColumnWidths;

@@ -150,6 +150,7 @@ type reportRow struct {
 	ActiveEmployeesCount   int                           `json:"activeEmployeesCount"`
 	VacantPositionsCount   int                           `json:"vacantPositionsCount"`
 	TraineesCount          int                           `json:"traineesCount"`
+	TraineesCountChange    int                           `json:"traineesCountChange"`
 	RecruitmentCount       int                           `json:"recruitmentCount"`
 	PlannedDismissalsCount int                           `json:"plannedDismissalsCount"`
 	PlannedDismissals      []debtsterPlannedDismissal    `json:"plannedDismissals"`
@@ -226,9 +227,14 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 	shouldSyncDebtster := shouldSyncDebtsterDepartments(date, today)
 	var departments []debtsterDepartment
 	var vacancies []debtsterVacancyReport
-	vacancies, err := fetchDebtsterVacancies(ctx, a.httpClient, a.debtsterAPI, date)
+	vacancies, vacanciesErr := fetchDebtsterVacancies(ctx, a.httpClient, a.debtsterAPI, date)
+	if vacanciesErr != nil {
+		log.Printf("read Debtster vacancies for %s: %v", date, vacanciesErr)
+	}
+	traineeBaselines, err := a.loadDebtsterTraineeBaselines(ctx, date, vacancies)
 	if err != nil {
-		log.Printf("read Debtster vacancies for %s: %v", date, err)
+		serverError(w, err)
+		return
 	}
 	if shouldSyncDebtster {
 		departments, err = fetchDebtsterDepartments(ctx, a.httpClient, a.debtsterAPI)
@@ -269,6 +275,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		rows = appendMissingDebtsterVacancyRows(rows, vacancies, plans.Hired)
 		applyCandidatePlans(rows, plans)
 		applyDebtsterVacancies(rows, vacancies)
+		applyDebtsterTraineeChanges(rows, vacancies, traineeBaselines)
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
 		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plans.Hired, "invitationPlan": plans.Invited, "hiringPlan": plans.Hired, "totals": totals(rows, plans)})
@@ -305,6 +312,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	rows = appendMissingDebtsterVacancyRows(rows, vacancies, 0)
 	applyDebtsterVacancies(rows, vacancies)
+	applyDebtsterTraineeChanges(rows, vacancies, traineeBaselines)
 	plans, err := a.candidatePlanTotals(ctx, date, claims.UserID, "rp")
 	if err != nil {
 		serverError(w, err)

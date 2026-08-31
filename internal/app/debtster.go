@@ -151,6 +151,74 @@ func applyDebtsterVacancies(rows []reportRow, vacancies []debtsterVacancyReport)
 	}
 }
 
+// loadDebtsterTraineeBaselines keeps the first successfully received value for
+// every department and report date. ON CONFLICT DO NOTHING makes that first
+// value stable when several report requests arrive concurrently.
+func (a *App) loadDebtsterTraineeBaselines(ctx context.Context, date string, vacancies []debtsterVacancyReport) (map[int]int, error) {
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin Debtster trainee cache: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, item := range vacancies {
+		if _, err = tx.Exec(ctx, `INSERT INTO debtster_daily_trainees(report_date,debtster_department_id,trainees_count)
+			VALUES ($1,$2,$3) ON CONFLICT(report_date,debtster_department_id) DO NOTHING`, date, item.ID, item.TraineesCount); err != nil {
+			return nil, fmt.Errorf("save Debtster trainee cache for department %d: %w", item.ID, err)
+		}
+	}
+
+	query, err := tx.Query(ctx, `SELECT debtster_department_id,trainees_count
+		FROM debtster_daily_trainees WHERE report_date=$1`, date)
+	if err != nil {
+		return nil, fmt.Errorf("read Debtster trainee cache for %s: %w", date, err)
+	}
+	baselines := make(map[int]int)
+	for query.Next() {
+		var departmentID, trainees int
+		if err = query.Scan(&departmentID, &trainees); err != nil {
+			query.Close()
+			return nil, fmt.Errorf("scan Debtster trainee cache for %s: %w", date, err)
+		}
+		baselines[departmentID] = trainees
+	}
+	if err = query.Err(); err != nil {
+		query.Close()
+		return nil, fmt.Errorf("read Debtster trainee cache for %s: %w", date, err)
+	}
+	query.Close()
+	if err = tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit Debtster trainee cache: %w", err)
+	}
+	return baselines, nil
+}
+
+func applyDebtsterTraineeChanges(rows []reportRow, vacancies []debtsterVacancyReport, baselines map[int]int) {
+	current := make(map[int]int, len(vacancies))
+	for _, item := range vacancies {
+		current[item.ID] = item.TraineesCount
+	}
+	for index := range rows {
+		departmentID, err := strconv.Atoi(rows[index].OfficeID)
+		if err != nil {
+			continue
+		}
+		baseline, cached := baselines[departmentID]
+		value, received := current[departmentID]
+		if received {
+			rows[index].TraineesCount = value
+			if cached {
+				rows[index].TraineesCountChange = value - baseline
+			}
+			continue
+		}
+		if cached {
+			rows[index].TraineesCount = baseline
+			rows[index].TraineesCountChange = 0
+		}
+	}
+}
+
 func appendMissingDebtsterVacancyRows(rows []reportRow, vacancies []debtsterVacancyReport, plan int) []reportRow {
 	existing := make(map[string]struct{}, len(rows))
 	maxSortOrder := 0

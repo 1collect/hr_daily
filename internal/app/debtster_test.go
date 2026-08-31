@@ -117,6 +117,27 @@ func TestFetchAndApplyDebtsterVacancies(t *testing.T) {
 	}
 }
 
+func TestApplyDebtsterTraineeChanges(t *testing.T) {
+	rows := []reportRow{{OfficeID: "12"}, {OfficeID: "18"}, {OfficeID: "24"}}
+	vacancies := []debtsterVacancyReport{
+		{ID: 12, TraineesCount: 5},
+		{ID: 24, TraineesCount: 1},
+	}
+	baselines := map[int]int{12: 3, 18: 4, 24: 3}
+
+	applyDebtsterTraineeChanges(rows, vacancies, baselines)
+
+	if rows[0].TraineesCount != 5 || rows[0].TraineesCountChange != 2 {
+		t.Fatalf("positive change = %#v, want count 5 and change 2", rows[0])
+	}
+	if rows[1].TraineesCount != 4 || rows[1].TraineesCountChange != 0 {
+		t.Fatalf("cached fallback = %#v, want count 4 and no change", rows[1])
+	}
+	if rows[2].TraineesCount != 1 || rows[2].TraineesCountChange != -2 {
+		t.Fatalf("negative change = %#v, want count 1 and change -2", rows[2])
+	}
+}
+
 func TestAppendMissingDebtsterVacancyRowsDoesNotChangeExistingRows(t *testing.T) {
 	rows := []reportRow{{ID: "saved-row", OfficeID: "12", OfficeName: "Сохранённое название", OpenVacancies: 7}}
 	vacancies := []debtsterVacancyReport{{ID: 12, RP: "РП Алматы"}, {ID: 18, RP: "РП Астана", StaffPositionsCount: 40}}

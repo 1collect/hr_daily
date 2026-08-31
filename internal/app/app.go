@@ -95,6 +95,8 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
 	m.HandleFunc("POST /api/report-access", a.openReportAccess)
 	m.HandleFunc("DELETE /api/report-access", a.closeReportAccess)
+	m.HandleFunc("GET /api/report-responsibles", a.reportResponsibles)
+	m.HandleFunc("PUT /api/report-responsibles", a.updateReportResponsibles)
 	m.HandleFunc("PUT /api/report/rows/{id}", a.updateRow)
 	m.HandleFunc("POST /api/reports/{id}/complete", a.completeReport)
 	m.HandleFunc("GET /api/reports/export", a.exportPeriod)
@@ -165,6 +167,7 @@ type reportRow struct {
 	People                 map[string][]string           `json:"people"`
 	PeopleDetails          map[string][]hiredDetail      `json:"peopleDetails,omitempty"`
 	Contributions          map[string][]cellContribution `json:"contributions,omitempty"`
+	ResponsibleCount       int                           `json:"responsibleCount"`
 }
 
 type hiredDetail struct {
@@ -276,6 +279,10 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		applyCandidatePlans(rows, plans)
 		applyDebtsterVacancies(rows, vacancies)
 		applyDebtsterTraineeChanges(rows, vacancies, traineeBaselines)
+		if err = a.applyResponsibleCounts(ctx, "rp", rows); err != nil {
+			serverError(w, err)
+			return
+		}
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
 		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plans.Hired, "invitationPlan": plans.Invited, "hiringPlan": plans.Hired, "totals": totals(rows, plans)})
@@ -298,8 +305,9 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if !usesDebtster {
 		_, err = a.db.Exec(ctx, `INSERT INTO report_rows(report_id,office_id,office_name_snapshot,office_sort_order_snapshot,debtster_department_id,debtster_department_name)
-			SELECT $1,id,name,sort_order,debtster_department_id,debtster_department_name FROM offices
-			WHERE active ON CONFLICT DO NOTHING`, reportID)
+			SELECT $1,o.id,o.name,o.sort_order,o.debtster_department_id,o.debtster_department_name FROM offices o
+			JOIN report_unit_responsibles a ON a.report_type='rp' AND a.unit_id=COALESCE(o.debtster_department_id::text,o.id::text) AND a.user_id=$2
+			WHERE o.active ON CONFLICT DO NOTHING`, reportID, claims.UserID)
 		if err != nil {
 			serverError(w, err)
 			return
@@ -311,6 +319,11 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows = appendMissingDebtsterVacancyRows(rows, vacancies, 0)
+	rows, err = a.filterAssignedRows(ctx, "rp", claims.UserID, rows)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	applyDebtsterVacancies(rows, vacancies)
 	applyDebtsterTraineeChanges(rows, vacancies, traineeBaselines)
 	plans, err := a.candidatePlanTotals(ctx, date, claims.UserID, "rp")
@@ -588,6 +601,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_type='rp' AND a.unit_id=COALESCE(rr.debtster_department_id::text,rr.office_id::text) AND a.user_id=$2)
 		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate, &invitationPlan, &hiringPlan); err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return

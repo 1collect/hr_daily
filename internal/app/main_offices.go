@@ -149,6 +149,10 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
+		if err = a.applyResponsibleCounts(ctx, "main_office", rows); err != nil {
+			serverError(w, err)
+			return
+		}
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
 		applyCandidatePlans(rows, plans)
@@ -165,12 +169,19 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = a.db.Exec(ctx, `INSERT INTO main_office_report_rows(report_id,main_office_id,main_office_name_snapshot,main_office_sort_order_snapshot)
-		SELECT $1,id,name,sort_order FROM main_offices WHERE active ON CONFLICT DO NOTHING`, reportID)
+		SELECT $1,o.id,o.name,o.sort_order FROM main_offices o
+		JOIN report_unit_responsibles a ON a.report_type='main_office' AND a.unit_id=o.id::text AND a.user_id=$2
+		WHERE o.active ON CONFLICT DO NOTHING`, reportID, claims.UserID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	rows, err := a.loadMainOfficeRows(ctx, reportID, date)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	rows, err = a.filterAssignedRows(ctx, "main_office", claims.UserID, rows)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -412,7 +423,9 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text,
 		COALESCE((SELECT d.invited_plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_invitation_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
-		FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &invitationPlan, &hiringPlan)
+		FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_type='main_office' AND a.unit_id=rr.main_office_id::text AND a.user_id=$2)
+		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &invitationPlan, &hiringPlan)
 	if err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return

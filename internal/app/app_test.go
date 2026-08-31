@@ -177,3 +177,16 @@ func TestUniqueUserIDs(t *testing.T) {
 		t.Fatalf("unexpected unique ids: %#v", got)
 	}
 }
+
+func TestValidReportUnitType(t *testing.T) {
+	for _, value := range []string{"rp", "main_office"} {
+		if !validReportUnitType(value) {
+			t.Fatalf("valid report unit type rejected: %s", value)
+		}
+	}
+	for _, value := range []string{"", "main-office", "office"} {
+		if validReportUnitType(value) {
+			t.Fatalf("invalid report unit type accepted: %s", value)
+		}
+	}
+}

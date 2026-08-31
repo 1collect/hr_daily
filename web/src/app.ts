@@ -53,10 +53,10 @@ const defaultColumnWidths:Record<string,number>={office:200,staffPositionsCount:
 const allColumns=[
   ['office','РП'],['openVacancies','Количество открытых вакансий'],
   ['invitedCandidates','Количество приглашенных кандидатов'],
+  ['invitationEfficiency','% исполнения плана по приглашенным кандидатам'],
   ['interviewedCandidates','Количество прошедших собеседование'],['interns','Количество кандидатов на стажировке'],
   ['plannedReserve','Планируемый резерв'],['reserveCandidates','Количество кандидатов в резерве'],
   ['hires','Количество принятых работников'],
-  ['invitationEfficiency','% исполнения плана по приглашенным кандидатам'],
   ['hiringEfficiency','% исполнения плана по принятым кандидатам']
 ] as const;
 const debtsterColumns=[

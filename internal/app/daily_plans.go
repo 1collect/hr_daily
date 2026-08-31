@@ -6,18 +6,22 @@ import (
 )
 
 type dailyPlanRecord struct {
-	UserID     string `json:"userId"`
-	Name       string `json:"name"`
-	Plan       int    `json:"plan"`
-	Overridden bool   `json:"overridden"`
+	UserID      string `json:"userId"`
+	Name        string `json:"name"`
+	Plan        int    `json:"plan"` // Backward-compatible alias for the hiring plan.
+	InvitedPlan int    `json:"invitedPlan"`
+	HiredPlan   int    `json:"hiredPlan"`
+	Overridden  bool   `json:"overridden"`
 }
 
 type dailyPlanInput struct {
 	Date       string `json:"date"`
 	ReportType string `json:"reportType"`
 	Plans      []struct {
-		UserID string `json:"userId"`
-		Plan   int    `json:"plan"`
+		UserID      string `json:"userId"`
+		Plan        int    `json:"plan"`
+		InvitedPlan int    `json:"invitedPlan"`
+		HiredPlan   int    `json:"hiredPlan"`
 	} `json:"plans"`
 }
 
@@ -35,12 +39,13 @@ func (a *App) dailyPlans(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Укажите корректную дату и тип отчёта")
 		return
 	}
-	baseTable := "employee_efficiency_plans"
+	hiredTable, invitedTable := "employee_efficiency_plans", "employee_invitation_plans"
 	if reportType == "main_office" {
-		baseTable = "main_office_employee_efficiency_plans"
+		hiredTable, invitedTable = "main_office_employee_efficiency_plans", "main_office_employee_invitation_plans"
 	}
 	query := `SELECT u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username),
-		COALESCE(d.plan_count,(SELECT p.plan_count FROM ` + baseTable + ` p WHERE p.user_id=u.id AND p.effective_from<=$1::date ORDER BY p.effective_from DESC LIMIT 1),0),
+		COALESCE(d.invited_plan_count,(SELECT p.plan_count FROM ` + invitedTable + ` p WHERE p.user_id=u.id AND p.effective_from<=$1::date ORDER BY p.effective_from DESC LIMIT 1),0),
+		COALESCE(d.plan_count,(SELECT p.plan_count FROM ` + hiredTable + ` p WHERE p.user_id=u.id AND p.effective_from<=$1::date ORDER BY p.effective_from DESC LIMIT 1),0),
 		(d.user_id IS NOT NULL)
 		FROM users u JOIN employees e ON e.id=u.employee_id
 		LEFT JOIN daily_efficiency_plan_overrides d ON d.user_id=u.id AND d.report_date=$1 AND d.report_type=$2
@@ -55,10 +60,11 @@ func (a *App) dailyPlans(w http.ResponseWriter, r *http.Request) {
 	out := []dailyPlanRecord{}
 	for rows.Next() {
 		var item dailyPlanRecord
-		if err = rows.Scan(&item.UserID, &item.Name, &item.Plan, &item.Overridden); err != nil {
+		if err = rows.Scan(&item.UserID, &item.Name, &item.InvitedPlan, &item.HiredPlan, &item.Overridden); err != nil {
 			serverError(w, err)
 			return
 		}
+		item.Plan = item.HiredPlan
 		out = append(out, item)
 	}
 	if err = rows.Err(); err != nil {
@@ -93,7 +99,10 @@ func (a *App) updateDailyPlans(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]bool{}
 	for _, plan := range input.Plans {
 		plan.UserID = strings.TrimSpace(plan.UserID)
-		if plan.UserID == "" || plan.Plan < 0 || seen[plan.UserID] {
+		if plan.HiredPlan == 0 && plan.Plan > 0 {
+			plan.HiredPlan = plan.Plan
+		}
+		if plan.UserID == "" || plan.InvitedPlan < 0 || plan.HiredPlan < 0 || seen[plan.UserID] {
 			problem(w, 422, "Планы должны быть целыми неотрицательными числами")
 			return
 		}
@@ -103,16 +112,16 @@ func (a *App) updateDailyPlans(w http.ResponseWriter, r *http.Request) {
 			problem(w, 422, "Один из сотрудников недоступен")
 			return
 		}
-		_, err = tx.Exec(r.Context(), `INSERT INTO daily_efficiency_plan_overrides(user_id,report_date,report_type,plan_count)
-			VALUES($1,$2,$3,$4) ON CONFLICT(user_id,report_date,report_type)
-			DO UPDATE SET plan_count=EXCLUDED.plan_count,updated_at=now()`, plan.UserID, input.Date, input.ReportType, plan.Plan)
+		_, err = tx.Exec(r.Context(), `INSERT INTO daily_efficiency_plan_overrides(user_id,report_date,report_type,plan_count,invited_plan_count)
+			VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,report_date,report_type)
+			DO UPDATE SET plan_count=EXCLUDED.plan_count,invited_plan_count=EXCLUDED.invited_plan_count,updated_at=now()`, plan.UserID, input.Date, input.ReportType, plan.HiredPlan, plan.InvitedPlan)
 		if err != nil {
 			serverError(w, err)
 			return
 		}
 		if input.ReportType == "rp" {
-			_, err = tx.Exec(r.Context(), `UPDATE report_rows rr SET efficiency=CASE WHEN $3>0 THEN round(rr.interviewed_candidates*100.0/$3,2) ELSE 0 END,updated_at=now()
-				FROM reports rp WHERE rp.id=rr.report_id AND rp.owner_user_id=$1 AND rp.report_date=$2`, plan.UserID, input.Date, plan.Plan)
+			_, err = tx.Exec(r.Context(), `UPDATE report_rows rr SET efficiency=CASE WHEN $3>0 THEN round((SELECT count(*) FROM hired_workers hw WHERE hw.report_row_id=rr.id)*100.0/$3,2) ELSE 0 END,updated_at=now()
+				FROM reports rp WHERE rp.id=rr.report_id AND rp.owner_user_id=$1 AND rp.report_date=$2`, plan.UserID, input.Date, plan.HiredPlan)
 			if err != nil {
 				serverError(w, err)
 				return
@@ -120,7 +129,7 @@ func (a *App) updateDailyPlans(w http.ResponseWriter, r *http.Request) {
 		}
 		userIDs = append(userIDs, plan.UserID)
 		_, _ = tx.Exec(r.Context(), `INSERT INTO audit_log(actor,action,entity_type,entity_id,details)
-			VALUES($1,'report.daily_plan.updated','user',$2,jsonb_build_object('date',$3::text,'reportType',$4::text,'plan',$5::int))`, claims.Username, plan.UserID, input.Date, input.ReportType, plan.Plan)
+			VALUES($1,'report.daily_plan.updated','user',$2,jsonb_build_object('date',$3::text,'reportType',$4::text,'invitedPlan',$5::int,'hiredPlan',$6::int))`, claims.Username, plan.UserID, input.Date, input.ReportType, plan.InvitedPlan, plan.HiredPlan)
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)

@@ -136,7 +136,7 @@ func TestDebtsterDepartmentsAreStoredDirectlyInReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aggregateRows, err := a.loadAggregateRows(ctx, date, "", 0)
+	aggregateRows, err := a.loadAggregateRows(ctx, date, "", candidatePlans{})
 	if err != nil {
 		t.Fatal(err)
 	}

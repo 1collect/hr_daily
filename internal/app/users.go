@@ -9,36 +9,46 @@ import (
 )
 
 type userRecord struct {
-	ID                     string `json:"id"`
-	EmployeeID             string `json:"employeeId"`
-	Username               string `json:"username"`
-	Role                   string `json:"role"`
-	FirstName              string `json:"firstName"`
-	LastName               string `json:"lastName"`
-	MiddleName             string `json:"middleName"`
-	Active                 bool   `json:"active"`
-	Plan                   int    `json:"plan"`
-	PlanFrom               string `json:"planFrom"`
-	NextPlan               int    `json:"nextPlan"`
-	NextPlanFrom           string `json:"nextPlanFrom"`
-	MainOfficePlan         int    `json:"mainOfficePlan"`
-	MainOfficePlanFrom     string `json:"mainOfficePlanFrom"`
-	NextMainOfficePlan     int    `json:"nextMainOfficePlan"`
-	NextMainOfficePlanFrom string `json:"nextMainOfficePlanFrom"`
+	ID                               string `json:"id"`
+	EmployeeID                       string `json:"employeeId"`
+	Username                         string `json:"username"`
+	Role                             string `json:"role"`
+	FirstName                        string `json:"firstName"`
+	LastName                         string `json:"lastName"`
+	MiddleName                       string `json:"middleName"`
+	Active                           bool   `json:"active"`
+	Plan                             int    `json:"plan"`
+	PlanFrom                         string `json:"planFrom"`
+	NextPlan                         int    `json:"nextPlan"`
+	NextPlanFrom                     string `json:"nextPlanFrom"`
+	MainOfficePlan                   int    `json:"mainOfficePlan"`
+	MainOfficePlanFrom               string `json:"mainOfficePlanFrom"`
+	NextMainOfficePlan               int    `json:"nextMainOfficePlan"`
+	NextMainOfficePlanFrom           string `json:"nextMainOfficePlanFrom"`
+	InvitationPlan                   int    `json:"invitationPlan"`
+	InvitationPlanFrom               string `json:"invitationPlanFrom"`
+	NextInvitationPlan               int    `json:"nextInvitationPlan"`
+	NextInvitationPlanFrom           string `json:"nextInvitationPlanFrom"`
+	MainOfficeInvitationPlan         int    `json:"mainOfficeInvitationPlan"`
+	MainOfficeInvitationPlanFrom     string `json:"mainOfficeInvitationPlanFrom"`
+	NextMainOfficeInvitationPlan     int    `json:"nextMainOfficeInvitationPlan"`
+	NextMainOfficeInvitationPlanFrom string `json:"nextMainOfficeInvitationPlanFrom"`
 }
 
 type userInput struct {
-	Username           string `json:"username"`
-	Password           string `json:"password"`
-	Role               string `json:"role"`
-	FirstName          string `json:"firstName"`
-	LastName           string `json:"lastName"`
-	MiddleName         string `json:"middleName"`
-	Active             bool   `json:"active"`
-	Plan               int    `json:"plan"`
-	PlanFrom           string `json:"planFrom"`
-	MainOfficePlan     int    `json:"mainOfficePlan"`
-	MainOfficePlanFrom string `json:"mainOfficePlanFrom"`
+	Username                 string `json:"username"`
+	Password                 string `json:"password"`
+	Role                     string `json:"role"`
+	FirstName                string `json:"firstName"`
+	LastName                 string `json:"lastName"`
+	MiddleName               string `json:"middleName"`
+	Active                   bool   `json:"active"`
+	Plan                     int    `json:"plan"`
+	PlanFrom                 string `json:"planFrom"`
+	MainOfficePlan           int    `json:"mainOfficePlan"`
+	MainOfficePlanFrom       string `json:"mainOfficePlanFrom"`
+	InvitationPlan           int    `json:"invitationPlan"`
+	MainOfficeInvitationPlan int    `json:"mainOfficeInvitationPlan"`
 }
 
 func (a *App) users(w http.ResponseWriter, r *http.Request) {
@@ -54,11 +64,17 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active,
 		COALESCE(p.plan_count,0),COALESCE(p.effective_from::text,''),COALESCE(np.plan_count,0),COALESCE(np.effective_from::text,''),
 		COALESCE(mp.plan_count,0),COALESCE(mp.effective_from::text,''),COALESCE(nmp.plan_count,0),COALESCE(nmp.effective_from::text,'')
+		,COALESCE(ip.plan_count,0),COALESCE(ip.effective_from::text,''),COALESCE(nip.plan_count,0),COALESCE(nip.effective_from::text,'')
+		,COALESCE(mip.plan_count,0),COALESCE(mip.effective_from::text,''),COALESCE(nmip.plan_count,0),COALESCE(nmip.effective_from::text,'')
 		FROM users u JOIN employees e ON e.id=u.employee_id
 		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_efficiency_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) p ON true
 		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_efficiency_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) np ON true
 		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM main_office_employee_efficiency_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) mp ON true
 		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM main_office_employee_efficiency_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) nmp ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_invitation_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) ip ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM employee_invitation_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) nip ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM main_office_employee_invitation_plans WHERE user_id=u.id AND effective_from<=CURRENT_DATE ORDER BY effective_from DESC LIMIT 1) mip ON true
+		LEFT JOIN LATERAL (SELECT plan_count,effective_from FROM main_office_employee_invitation_plans WHERE user_id=u.id AND effective_from>CURRENT_DATE ORDER BY effective_from ASC LIMIT 1) nmip ON true
 		WHERE NOT u.system AND u.active AND ($1='' OR u.role=$1)
 		ORDER BY e.last_name,e.first_name`, roleFilter)
 	if err != nil {
@@ -69,7 +85,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	out := []userRecord{}
 	for q.Next() {
 		var x userRecord
-		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom); err != nil {
+		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom, &x.InvitationPlan, &x.InvitationPlanFrom, &x.NextInvitationPlan, &x.NextInvitationPlanFrom, &x.MainOfficeInvitationPlan, &x.MainOfficeInvitationPlanFrom, &x.NextMainOfficeInvitationPlan, &x.NextMainOfficeInvitationPlanFrom); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -102,11 +118,20 @@ func validateUserInput(in userInput, creating bool) string {
 		if in.Plan > 0 && !validDate(in.PlanFrom) {
 			return "Укажите дату начала действия плана"
 		}
+		if in.InvitationPlan > 0 && !validDate(in.PlanFrom) {
+			return "Укажите дату начала действия плана приглашённых РП"
+		}
 		if in.MainOfficePlan < 0 {
 			return "План ГО не может быть отрицательным"
 		}
+		if in.InvitationPlan < 0 || in.MainOfficeInvitationPlan < 0 {
+			return "План по приглашённым не может быть отрицательным"
+		}
 		if in.MainOfficePlan > 0 && !validDate(in.MainOfficePlanFrom) {
 			return "Укажите дату начала действия плана ГО"
+		}
+		if in.MainOfficeInvitationPlan > 0 && !validDate(in.MainOfficePlanFrom) {
+			return "Укажите дату начала действия плана приглашённых ГО"
 		}
 	}
 	return ""
@@ -162,6 +187,18 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.Role == "employee" && in.InvitationPlan > 0 {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO employee_invitation_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)`, userID, in.InvitationPlan, in.PlanFrom); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	if in.Role == "employee" && in.MainOfficeInvitationPlan > 0 {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO main_office_employee_invitation_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)`, userID, in.MainOfficeInvitationPlan, in.MainOfficePlanFrom); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
@@ -211,7 +248,7 @@ func (a *App) createUserPlan(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	_, err = tx.Exec(ctx, `UPDATE report_rows rr SET efficiency=CASE WHEN $3>0 THEN round(rr.interviewed_candidates*100.0/$3,2) ELSE 0 END,updated_at=now()
+	_, err = tx.Exec(ctx, `UPDATE report_rows rr SET efficiency=CASE WHEN $3>0 THEN round((SELECT count(*) FROM hired_workers hw WHERE hw.report_row_id=rr.id)*100.0/$3,2) ELSE 0 END,updated_at=now()
 		FROM reports rp WHERE rp.id=rr.report_id AND rp.owner_user_id=$1 AND rp.report_date>=$2
 		AND NOT EXISTS (SELECT 1 FROM employee_efficiency_plans later WHERE later.user_id=$1 AND later.effective_from>$2 AND later.effective_from<=rp.report_date)
 		AND NOT EXISTS (SELECT 1 FROM daily_efficiency_plan_overrides daily WHERE daily.user_id=$1 AND daily.report_date=rp.report_date AND daily.report_type='rp')`, r.PathValue("id"), in.PlanFrom, in.Plan)
@@ -309,6 +346,81 @@ func (a *App) deleteFutureMainOfficeUserPlan(w http.ResponseWriter, r *http.Requ
 	}
 	a.log(r.Context(), "user.main_office_plan.cancelled", "user", r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type candidatePlansInput struct {
+	EffectiveFrom     string `json:"effectiveFrom"`
+	RPInvited         int    `json:"rpInvited"`
+	RPHired           int    `json:"rpHired"`
+	MainOfficeInvited int    `json:"mainOfficeInvited"`
+	MainOfficeHired   int    `json:"mainOfficeHired"`
+}
+
+func (a *App) updateCandidatePlans(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	var input candidatePlansInput
+	if !decode(w, r, &input) {
+		return
+	}
+	input.EffectiveFrom = strings.TrimSpace(input.EffectiveFrom)
+	if !validDate(input.EffectiveFrom) {
+		problem(w, 422, "Укажите корректную дату начала действия планов")
+		return
+	}
+	if input.RPInvited < 0 || input.RPHired < 0 || input.MainOfficeInvited < 0 || input.MainOfficeHired < 0 {
+		problem(w, 422, "Планы должны быть целыми неотрицательными числами")
+		return
+	}
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var allowed bool
+	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='employee' AND active AND NOT system)`, r.PathValue("id")).Scan(&allowed); err != nil {
+		serverError(w, err)
+		return
+	}
+	if !allowed {
+		problem(w, 404, "Сотрудник не найден")
+		return
+	}
+	plans := []struct {
+		table string
+		value int
+	}{
+		{"employee_invitation_plans", input.RPInvited},
+		{"employee_efficiency_plans", input.RPHired},
+		{"main_office_employee_invitation_plans", input.MainOfficeInvited},
+		{"main_office_employee_efficiency_plans", input.MainOfficeHired},
+	}
+	for _, plan := range plans {
+		_, err = tx.Exec(r.Context(), `INSERT INTO `+plan.table+`(user_id,plan_count,effective_from) VALUES($1,$2,$3)
+			ON CONFLICT(user_id,effective_from) DO UPDATE SET plan_count=EXCLUDED.plan_count`, r.PathValue("id"), plan.value, input.EffectiveFrom)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE report_rows rr SET efficiency=CASE WHEN effective.plan_count>0
+		THEN round((SELECT count(*) FROM hired_workers hw WHERE hw.report_row_id=rr.id)*100.0/effective.plan_count,2) ELSE 0 END,updated_at=now()
+		FROM reports rp JOIN LATERAL (SELECT COALESCE(
+			(SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),
+			(SELECT p.plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS plan_count) effective ON true
+		WHERE rr.report_id=rp.id AND rp.owner_user_id=$1 AND rp.report_date>=$2`, r.PathValue("id"), input.EffectiveFrom)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	a.log(r.Context(), "user.candidate_plans.updated", "user", r.PathValue("id"))
+	jsonOut(w, 200, input)
 }
 
 func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {

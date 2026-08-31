@@ -46,8 +46,8 @@ func TestEmployeeCanBeCreatedWithoutPlan(t *testing.T) {
 
 func TestTotalsUsesPlanOnce(t *testing.T) {
 	rows := []reportRow{{InterviewedCandidates: 2, PlannedReserve: 4, HiredWorkers: []hiredWorker{{FullName: "Первый"}}, EfficiencyPlan: 10}, {InterviewedCandidates: 3, PlannedReserve: 6, HiredWorkers: []hiredWorker{{FullName: "Второй"}}, EfficiencyPlan: 10}}
-	got := totals(rows, 10)
-	if got["efficiencyPlan"] != 10 || got["efficiency"] != 50.0 {
+	got := totals(rows, candidatePlans{Invited: 8, Hired: 10})
+	if got["efficiencyPlan"] != 10 || got["hiringEfficiency"] != 20.0 {
 		t.Fatalf("unexpected totals: %#v", got)
 	}
 	if got["plannedReserve"] != 10 {
@@ -62,8 +62,8 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	f := excelize.NewFile()
 	f.SetSheetName("Sheet1", "РП")
 	rows := []exportSummaryRow{
-		{Office: "РП 1", Interviewed: 3, Plan: 10, TotalPlan: 10},
-		{Office: "РП 2", Interviewed: 2, Plan: 10, TotalPlan: 10},
+		{Office: "РП 1", Invited: 4, Hired: 3, Plan: 10, TotalPlan: 10, InvitationPlan: 8, TotalInvitationPlan: 8},
+		{Office: "РП 2", Invited: 2, Hired: 2, Plan: 10, TotalPlan: 10, InvitationPlan: 8, TotalInvitationPlan: 8},
 	}
 	writeExportSummarySheet(f, exportKinds["rp"], rows, nil, newExportStyles(f))
 	if header, err := f.GetCellValue("РП", "F1"); err != nil || header != "Планируемый резерв" {
@@ -72,7 +72,13 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	if header, err := f.GetCellValue("РП", "H1"); err != nil || header != "Количество принятых работников" {
 		t.Fatalf("hired workers header=%q, err=%v", header, err)
 	}
-	got, err := f.GetCellValue("РП", "J4")
+	if header, _ := f.GetCellValue("РП", "J1"); header != "% исполнения плана по приглашенным кандидатам" {
+		t.Fatalf("invitation efficiency header=%q", header)
+	}
+	if header, _ := f.GetCellValue("РП", "K1"); header != "% исполнения плана по принятым кандидатам" {
+		t.Fatalf("hiring efficiency header=%q", header)
+	}
+	got, err := f.GetCellValue("РП", "K4")
 	if err != nil {
 		t.Fatal(err)
 	}

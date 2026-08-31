@@ -168,6 +168,7 @@ type reportRow struct {
 	PeopleDetails          map[string][]hiredDetail      `json:"peopleDetails,omitempty"`
 	Contributions          map[string][]cellContribution `json:"contributions,omitempty"`
 	ResponsibleCount       int                           `json:"responsibleCount"`
+	Assigned               bool                          `json:"assigned"`
 }
 
 type hiredDetail struct {
@@ -306,8 +307,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 	} else if !usesDebtster {
 		_, err = a.db.Exec(ctx, `INSERT INTO report_rows(report_id,office_id,office_name_snapshot,office_sort_order_snapshot,debtster_department_id,debtster_department_name)
 			SELECT $1,o.id,o.name,o.sort_order,o.debtster_department_id,o.debtster_department_name FROM offices o
-			JOIN report_unit_responsibles a ON a.report_type='rp' AND a.unit_id=COALESCE(o.debtster_department_id::text,o.id::text) AND a.user_id=$2
-			WHERE o.active ON CONFLICT DO NOTHING`, reportID, claims.UserID)
+			WHERE o.active ON CONFLICT DO NOTHING`, reportID)
 		if err != nil {
 			serverError(w, err)
 			return
@@ -319,8 +319,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows = appendMissingDebtsterVacancyRows(rows, vacancies, 0)
-	rows, err = a.filterAssignedRows(ctx, "rp", claims.UserID, rows)
-	if err != nil {
+	if err = a.markAssignedRows(ctx, "rp", claims.UserID, rows); err != nil {
 		serverError(w, err)
 		return
 	}

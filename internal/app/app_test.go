@@ -190,3 +190,14 @@ func TestValidReportUnitType(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyAssignedFlagsKeepsAllRows(t *testing.T) {
+	rows := []reportRow{{OfficeID: "12"}, {OfficeID: "18"}, {OfficeID: "24"}}
+	applyAssignedFlags(rows, map[string]bool{"12": true, "24": true})
+	if !rows[0].Assigned || rows[1].Assigned || !rows[2].Assigned {
+		t.Fatalf("unexpected assigned flags: %#v", rows)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows were filtered: got %d, want 3", len(rows))
+	}
+}

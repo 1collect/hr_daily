@@ -168,3 +168,30 @@ func (a *App) filterAssignedRows(ctx context.Context, reportType, userID string,
 	}
 	return filtered, q.Err()
 }
+
+func (a *App) markAssignedRows(ctx context.Context, reportType, userID string, rows []reportRow) error {
+	q, err := a.db.Query(ctx, `SELECT unit_id FROM report_unit_responsibles WHERE report_type=$1 AND user_id=$2`, reportType, userID)
+	if err != nil {
+		return err
+	}
+	defer q.Close()
+	assigned := map[string]bool{}
+	for q.Next() {
+		var id string
+		if err = q.Scan(&id); err != nil {
+			return err
+		}
+		assigned[id] = true
+	}
+	if err = q.Err(); err != nil {
+		return err
+	}
+	applyAssignedFlags(rows, assigned)
+	return nil
+}
+
+func applyAssignedFlags(rows []reportRow, assigned map[string]bool) {
+	for index := range rows {
+		rows[index].Assigned = assigned[rows[index].OfficeID]
+	}
+}

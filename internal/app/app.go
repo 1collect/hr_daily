@@ -280,7 +280,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		applyCandidatePlans(rows, plans)
 		applyDebtsterVacancies(rows, vacancies)
 		applyDebtsterTraineeChanges(rows, vacancies, traineeBaselines)
-		if err = a.applyResponsibleCounts(ctx, "rp", rows); err != nil {
+		if err = a.applyResponsibleCounts(ctx, date, "rp", rows); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -319,7 +319,7 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows = appendMissingDebtsterVacancyRows(rows, vacancies, 0)
-	if err = a.markAssignedRows(ctx, "rp", claims.UserID, rows); err != nil {
+	if err = a.markAssignedRows(ctx, date, "rp", claims.UserID, rows); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -600,7 +600,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
-		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_type='rp' AND a.unit_id=COALESCE(rr.debtster_department_id::text,rr.office_id::text) AND a.user_id=$2)
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_date=rp.report_date AND a.report_type='rp' AND a.unit_id=COALESCE(rr.debtster_department_id::text,rr.office_id::text) AND a.user_id=$2)
 		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate, &invitationPlan, &hiringPlan); err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return

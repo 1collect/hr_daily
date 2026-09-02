@@ -44,8 +44,10 @@ var exportKinds = map[string]exportKindConfig{
 }
 
 func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireManager(w, r); !ok {
-		return
+	claims := claimsFrom(r.Context())
+	ownerID := ""
+	if !isManager(claims) {
+		ownerID = claims.UserID
 	}
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
 	reportType := r.URL.Query().Get("reportType")
@@ -81,7 +83,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	f := excelize.NewFile()
 	styles := newExportStyles(f)
 	for index, kind := range kinds {
-		rows, sections, err := a.loadExportData(r.Context(), kind, from, to)
+		rows, sections, err := a.loadExportData(r.Context(), kind, from, to, ownerID)
 		if err != nil {
 			serverError(w, err)
 			return
@@ -95,7 +97,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 			_, _ = f.NewSheet(kind.Sheet)
 		}
 		writeExportSummarySheet(f, kind, rows, sections, styles)
-		if err = a.writeExportDetailSheets(r.Context(), f, kind, from, to, styles); err != nil {
+		if err = a.writeExportDetailSheets(r.Context(), f, kind, from, to, ownerID, styles); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -150,13 +152,15 @@ func normalizeExportOfficeName(name string) string {
 	return strings.ToLower(strings.Join(strings.Fields(name), " "))
 }
 
-func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, to string) ([]exportSummaryRow, []employeeExportSection, error) {
+func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, to, ownerID string) ([]exportSummaryRow, []employeeExportSection, error) {
 	if kind.Kind == "rp" {
-		return a.loadRPExportData(ctx, from, to)
+		return a.loadRPExportData(ctx, from, to, ownerID)
 	}
 	officeScope := "o.active"
-	if kind.Kind == "rp" {
-		officeScope = "o.debtster_department_id IS NOT NULL"
+	if ownerID != "" {
+		// An employee export must only contain units present in that employee's
+		// reports; active units without their data belong only in manager exports.
+		officeScope = "false"
 	}
 	relevant := fmt.Sprintf(`SELECT planned.*,
 		sum(efficiency_plan) OVER () AS total_efficiency_plan,
@@ -169,7 +173,8 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 		COALESCE((SELECT d.invited_plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type=$3),
 		(SELECT plan_count FROM %s p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS invitation_plan
 		FROM %s rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
-		LEFT JOIN employees e ON e.id=u.employee_id WHERE rp.report_date BETWEEN $1 AND $2) planned`, kind.PlanTable, kind.InvitationPlanTable, kind.Reports)
+		LEFT JOIN employees e ON e.id=u.employee_id WHERE rp.report_date BETWEEN $1 AND $2
+		AND ($4='' OR rp.owner_user_id::text=$4)) planned`, kind.PlanTable, kind.InvitationPlanTable, kind.Reports)
 
 	summaryQuery := fmt.Sprintf(`WITH relevant_reports AS (%s), office_scope AS (
 		SELECT o.id,
@@ -196,7 +201,7 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 		relevant, kind.NameSnapshot, kind.Rows, kind.OfficeID, kind.SortSnapshot, kind.Rows, kind.OfficeID,
 		kind.Offices, officeScope, kind.Rows, kind.OfficeID, kind.Hired, kind.OfficeID, kind.OfficeID, kind.Shared, kind.OfficeID,
 		kind.OfficeID, kind.Rows, kind.Rows, kind.OfficeID)
-	query, err := a.db.Query(ctx, summaryQuery, from, to, kind.Kind)
+	query, err := a.db.Query(ctx, summaryQuery, from, to, kind.Kind, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -231,7 +236,7 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 	ORDER BY rp.owner_name,COALESCE(NULLIF(rr.%s,0),o.sort_order),COALESCE(NULLIF(rr.%s,''),o.name)`,
 		relevant, kind.Hired, kind.OfficeID, kind.OfficeID, kind.Shared, kind.OfficeID, kind.NameSnapshot,
 		kind.Rows, kind.Offices, kind.OfficeID, kind.OfficeID, kind.NameSnapshot, kind.SortSnapshot, kind.SortSnapshot, kind.NameSnapshot)
-	employeeRows, err := a.db.Query(ctx, employeeQuery, from, to, kind.Kind)
+	employeeRows, err := a.db.Query(ctx, employeeQuery, from, to, kind.Kind, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -263,7 +268,7 @@ func (a *App) loadExportData(ctx context.Context, kind exportKindConfig, from, t
 	return rows, sections, nil
 }
 
-func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSummaryRow, []employeeExportSection, error) {
+func (a *App) loadRPExportData(ctx context.Context, from, to, ownerID string) ([]exportSummaryRow, []employeeExportSection, error) {
 	relevant := `SELECT planned.*,
 		sum(efficiency_plan) OVER () AS total_efficiency_plan,
 		sum(efficiency_plan) OVER (PARTITION BY owner_user_id) AS owner_efficiency_plan,
@@ -275,7 +280,8 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 		COALESCE((SELECT d.invited_plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),
 		(SELECT plan_count FROM employee_invitation_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) AS invitation_plan
 		FROM reports rp JOIN users u ON u.id=rp.owner_user_id AND u.role='employee' AND u.active AND NOT u.system
-		LEFT JOIN employees e ON e.id=u.employee_id WHERE rp.report_date BETWEEN $1 AND $2) planned`
+		LEFT JOIN employees e ON e.id=u.employee_id WHERE rp.report_date BETWEEN $1 AND $2
+		AND ($3='' OR rp.owner_user_id::text=$3)) planned`
 	summary, err := a.db.Query(ctx, `WITH relevant_reports AS (`+relevant+`), hc AS (
 		SELECT report_row_id,count(*) AS n FROM hired_workers GROUP BY report_row_id)
 		SELECT COALESCE(max(rr.debtster_department_id),0),max(rr.office_name_snapshot),max(rr.open_vacancies),sum(rr.invited_candidates),sum(rr.interviewed_candidates),
@@ -284,7 +290,7 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 		COALESCE(string_agg(DISTINCT rp.owner_name,', ' ORDER BY rp.owner_name) FILTER (WHERE rr.invited_candidates>0 OR rr.interviewed_candidates>0 OR rr.interns>0 OR rr.reserve_candidates>0 OR COALESCE(hc.n,0)>0),'')
 		FROM relevant_reports rp JOIN report_rows rr ON rr.report_id=rp.id LEFT JOIN hc ON hc.report_row_id=rr.id
 		GROUP BY COALESCE(rr.debtster_department_id::text,rr.office_id::text)
-		ORDER BY min(rr.office_sort_order_snapshot),max(rr.office_name_snapshot)`, from, to)
+		ORDER BY min(rr.office_sort_order_snapshot),max(rr.office_name_snapshot)`, from, to, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -309,7 +315,7 @@ func (a *App) loadRPExportData(ctx context.Context, from, to string) ([]exportSu
 		sum(rr.reserve_candidates),sum(COALESCE(hc.n,0)),sum(rp.efficiency_plan),max(rp.owner_efficiency_plan),sum(rp.invitation_plan),max(rp.owner_invitation_plan)
 		FROM relevant_reports rp JOIN report_rows rr ON rr.report_id=rp.id LEFT JOIN hc ON hc.report_row_id=rr.id
 		GROUP BY rp.owner_user_id,rp.owner_name,COALESCE(rr.debtster_department_id::text,rr.office_id::text)
-		ORDER BY rp.owner_name,min(rr.office_sort_order_snapshot),max(rr.office_name_snapshot)`, from, to)
+		ORDER BY rp.owner_name,min(rr.office_sort_order_snapshot),max(rr.office_name_snapshot)`, from, to, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -411,7 +417,7 @@ func writeExportSummarySheet(f *excelize.File, kind exportKindConfig, rows []exp
 	}
 }
 
-func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kind exportKindConfig, from, to string, styles exportStyles) error {
+func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kind exportKindConfig, from, to, ownerID string, styles exportStyles) error {
 	hiredSheet := "Принятые " + kind.Sheet
 	_, _ = f.NewSheet(hiredSheet)
 	for index, header := range []string{kind.Unit, "Должность", "Сотрудник которого приняли", "Ответственный"} {
@@ -432,18 +438,18 @@ func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kin
 			COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 			FROM hired_workers hw JOIN report_rows rr ON rr.id=hw.report_row_id JOIN reports rp ON rp.id=rr.report_id
 			JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
-			WHERE rp.report_date BETWEEN $1 AND $2
+			WHERE rp.report_date BETWEEN $1 AND $2 AND ($3='' OR rp.owner_user_id::text=$3)
 			ORDER BY rr.office_sort_order_snapshot,e.last_name,e.first_name,e.middle_name,hw.created_at`
 	} else {
 		hiresQuery = fmt.Sprintf(`SELECT COALESCE(NULLIF(rr.%s,''),o.name),hw.position,hw.full_name,
 			COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 			FROM %s hw JOIN %s rr ON rr.id=hw.report_row_id JOIN %s rp ON rp.id=rr.report_id
 			JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
-			JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2
+			JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2 AND ($3='' OR rp.owner_user_id::text=$3)
 			ORDER BY COALESCE(NULLIF(rr.%s,0),o.sort_order),e.last_name,e.first_name,e.middle_name,hw.created_at`,
 			kind.NameSnapshot, kind.Hired, kind.Rows, kind.Reports, kind.Offices, kind.OfficeID, kind.SortSnapshot)
 	}
-	hires, err := a.db.Query(ctx, hiresQuery, from, to)
+	hires, err := a.db.Query(ctx, hiresQuery, from, to, ownerID)
 	if err != nil {
 		return err
 	}
@@ -490,18 +496,18 @@ func (a *App) writeExportDetailSheets(ctx context.Context, f *excelize.File, kin
 			COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 			FROM report_row_people p JOIN report_rows rr ON rr.id=p.report_row_id JOIN reports rp ON rp.id=rr.report_id
 			JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
-			WHERE rp.report_date BETWEEN $1 AND $2 AND p.category<>'dismissed_workers'
+			WHERE rp.report_date BETWEEN $1 AND $2 AND p.category<>'dismissed_workers' AND ($3='' OR rp.owner_user_id::text=$3)
 			ORDER BY rp.report_date,rr.office_sort_order_snapshot,p.category,e.last_name,e.first_name,p.created_at,p.id`
 	} else {
 		peopleQuery = fmt.Sprintf(`SELECT to_char(rp.report_date,'DD.MM.YYYY'),COALESCE(NULLIF(rr.%s,''),o.name),p.category,p.full_name,
 			COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),NULLIF(rp.owner_name_snapshot,''),u.username)
 			FROM %s p JOIN %s rr ON rr.id=p.report_row_id JOIN %s rp ON rp.id=rr.report_id
 			JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system LEFT JOIN employees e ON e.id=u.employee_id
-			JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2 AND p.category<>'dismissed_workers'
+			JOIN %s o ON o.id=rr.%s WHERE rp.report_date BETWEEN $1 AND $2 AND p.category<>'dismissed_workers' AND ($3='' OR rp.owner_user_id::text=$3)
 			ORDER BY rp.report_date,COALESCE(NULLIF(rr.%s,0),o.sort_order),p.category,e.last_name,e.first_name,p.created_at,p.id`,
 			kind.NameSnapshot, kind.People, kind.Rows, kind.Reports, kind.Offices, kind.OfficeID, kind.SortSnapshot)
 	}
-	people, err := a.db.Query(ctx, peopleQuery, from, to)
+	people, err := a.db.Query(ctx, peopleQuery, from, to, ownerID)
 	if err != nil {
 		return err
 	}

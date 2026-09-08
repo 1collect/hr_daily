@@ -107,7 +107,21 @@ function toast(message:string,error=false){
  toastTimer=window.setTimeout(()=>e.classList.remove('show'),duration);
 }
 function setHeader(h:string,s:string){title.textContent=h;subtitle.textContent=s}
-function drawNav(){nav.innerHTML=pages.map(([id,icon,label])=>`<button class="nav-item ${id===currentPage?'active':''}" data-page="${id}"><span class="nav-icon">${icon}</span><span class="nav-label">${label}</span></button>`).join('');nav.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>{currentPage=b.dataset.page!;drawNav();route()})}
+function drawNav(){
+  const groups=[{label:'Работа с отчётами',ids:['report','main-report','exports']},{label:'Управление',ids:['users','offices','main-offices']}];
+  nav.innerHTML=groups.map(group=>{
+    const items=pages.filter(([id])=>group.ids.includes(id));
+    if(!items.length)return '';
+    return `<div class="nav-group"><div class="nav-group-title">${group.label}</div>${items.map(([id,itemIcon,label])=>{
+      const badge=id==='report'?'РП':id==='main-report'?'ГО':'';
+      const displayLabel=badge?'Ежедневный отчёт':id==='main-offices'?'Главный офис':label;
+      return `<button type="button" class="nav-item ${id===currentPage?'active':''}" data-page="${id}"${id===currentPage?' aria-current="page"':''}><span class="nav-icon">${itemIcon}</span><span class="nav-label">${displayLabel}</span>${badge?`<span class="nav-badge">${badge}</span>`:''}</button>`;
+    }).join('')}</div>`;
+  }).join('');
+  nav.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>{
+    currentPage=b.dataset.page!;drawNav();nav.querySelector<HTMLButtonElement>(`[data-page="${currentPage}"]`)?.focus({preventScroll:true});route();
+  });
+}
 async function route(){closeDatePicker();const reportView=currentPage==='report'||currentPage==='main-report';if(currentPage!=='report')stopDebtsterRefresh();content.classList.toggle('report-workspace',reportView);document.body.classList.toggle('report-page',reportView);if(!reportView&&reportSocket){const old=reportSocket;reportSocket=null;old.close()}content.innerHTML='<div class="empty">Загрузка…</div>';try{if(reportView)await loadReport();else if(currentPage==='exports')await exportPage();else if(currentPage==='users')await usersPage();else if(currentPage==='offices')await officesPage();else if(currentPage==='main-offices')await mainOfficesPage()}catch(e){content.innerHTML=`<div class="card empty">${esc((e as Error).message)}</div>`;scheduleDebtsterRefresh()}}
 
 const numeric:[keyof Row,string][]=[['openVacancies','Количество открытых вакансий'],['invitedCandidates','Количество приглашенных кандидатов'],['interviewedCandidates','Количество прошедших собеседование'],['interns','Количество кандидатов на стажировке'],['plannedReserve','Планируемый резерв'],['reserveCandidates','Количество кандидатов в резерве']];

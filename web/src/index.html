@@ -10,10 +10,16 @@
   <aside class="sidebar">
     <div class="brand"><span class="brand-mark">HR</span><div class="brand-copy"><strong>HR Daily</strong><small>Рабочее пространство</small></div></div>
     <nav id="nav" aria-label="Основная навигация"></nav>
-    <div class="sidebar-foot"><span class="status-dot"></span><span>Система доступна</span></div>
+    <div class="sidebar-foot">
+      <div class="sidebar-profile">
+        <span id="profile-avatar" aria-hidden="true">—</span>
+        <div class="sidebar-profile-copy"><b id="profile-name">Пользователь</b><small id="profile-role">—</small></div>
+        <button id="logout" class="sidebar-logout" type="button" aria-label="Выйти" title="Выйти"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M8 12h10"/></svg></button>
+      </div>
+    </div>
   </aside>
   <main>
-    <header><div class="page-heading"><h1 id="page-title">Ежедневный отчёт</h1><p id="page-subtitle">Оперативные показатели РП</p></div><div class="profile"><span id="profile-avatar">—</span><div><b id="profile-name">Пользователь</b><small id="profile-role">—</small></div><button id="logout" class="header-action" aria-label="Выйти"><svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg><span>Выйти</span></button></div></header>
+    <header><div class="page-heading"><h1 id="page-title">Ежедневный отчёт</h1><p id="page-subtitle">Оперативные показатели РП</p></div></header>
     <section id="content" aria-live="polite"></section>
   </main>
   <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>

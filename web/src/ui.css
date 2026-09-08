@@ -103,3 +103,50 @@ body.logged-out .sidebar,body.logged-out main{display:none}.login-screen{positio
 .export-panel{width:100%;max-width:760px;margin:0 auto;border-radius:6px}.export-panel .card-head{min-height:62px;padding:10px 16px}.panel-actions{padding:12px 16px}.panel-actions .btn{height:38px}.export-panel .panel-body{padding:20px}.export-form{grid-template-columns:repeat(3,minmax(0,220px));gap:14px;margin-bottom:20px}.export-form .input,.export-form select{width:100%;height:40px}.export-form label{font-size:12px}.export-note{gap:5px;padding:14px 0}.export-note b{font-size:14px}.export-note span{font-size:13px;line-height:1.5}
 
 @media(max-width:760px){#content{padding:14px}.admin-card .card-head{align-items:flex-start;flex-direction:column}.page-actions{width:100%;justify-content:space-between}.table-search{width:100%}.person-grid,.access-grid,.plan-grid,.office-grid{grid-template-columns:1fr}.daily-plan-row{grid-template-columns:1fr 1fr}.daily-plan-row>span{grid-column:1/-1}.candidate-plans-head{align-items:stretch;flex-direction:column;gap:10px}.plan-effective-date{flex-basis:auto;width:100%}.candidate-plan-matrix{grid-template-columns:minmax(130px,1.3fr) repeat(2,minmax(76px,1fr));gap:8px}.modal-hint{display:none}}
+
+/* Report visual hierarchy */
+.sidebar{background:linear-gradient(180deg,#111f39 0%,#0b1426 100%);border-right-color:#142443;color:#dae5f7}
+.sidebar .brand{padding-bottom:30px}
+.sidebar .brand strong{color:#f3f6fc}
+.sidebar .brand-copy small{color:#9eafc6}
+.sidebar #nav{scrollbar-color:#485b76 transparent}
+.nav-group-title{color:#9aacc4}
+.nav-item{color:#dae5f7}
+.nav-icon{color:#94a9c5}
+.nav-item:hover{background:#203657;color:#f4f7fc}
+.nav-item.active{background:#2563eb;border-color:#427cf7;color:#fff;box-shadow:0 5px 16px rgba(0,64,200,.25)}
+.nav-item.active:before{background:#c6dcff}
+.nav-item.active .nav-icon{color:#e3eeff}
+.nav-item:focus-visible{outline-color:#e3eeff}
+.nav-badge{background:#273950;border-color:#425773;color:#b8c9df}
+.nav-item.active .nav-badge{background:#1d50c5;border-color:#6090f5;color:#fff}
+.sidebar-foot{border-top-color:#33435a;color:#a1b2c9}
+.sidebar .status-dot{background:#53c99b;box-shadow:0 0 0 3px rgba(83,201,155,.12)}
+body.report-page{--header-h:76px;--toolbar-h:84px;--workspace-gap:20px;--app-bg:#dce4ef}
+body.report-page>main>header{padding-inline:26px;border-bottom-color:#c8d4e5}
+body.report-page .page-heading h1{font-size:21px;letter-spacing:-.45px;line-height:27px}
+body.report-page .page-heading p{display:block;margin:3px 0 0;font-size:12px;color:#556982}
+.report-workspace .toolbar{gap:12px;padding:12px 16px;border-color:#d6e0eb;border-radius:12px 12px 0 0;box-shadow:0 3px 14px rgba(35,57,87,.04)}
+.report-workspace .date-switcher{flex-shrink:0;border-color:#d6e0eb;border-radius:8px;background:#f8fafd}
+.report-workspace .date-switcher .btn,.report-workspace .report-date-button{background:#f8fafd}
+.report-workspace .report-date-button{width:138px;font-size:13px;font-weight:550}
+.report-workspace #employee-filter{min-width:190px;border-color:#d6e0eb;border-radius:8px;background:#f8fafd;font-size:13px}
+.report-workspace .daily-plan-summary{flex-shrink:0;height:58px;gap:18px;padding:8px 14px;border:1px solid #2861ca;border-radius:9px;background:#1f55b5;text-align:left}
+.report-workspace .daily-plan-summary>span{display:grid;gap:2px}
+.report-workspace .daily-plan-summary small{font-size:10px;font-weight:500;color:#e0eaff}
+.report-workspace .daily-plan-summary b{font-size:20px;line-height:25px;color:#fff;letter-spacing:-.4px}
+.report-workspace .daily-plan-summary .plan-target{font-size:13px;font-weight:500;color:#d1e1ff;letter-spacing:0}
+.report-workspace .daily-plan-divider{height:32px;background:#527fc9}
+.report-workspace .daily-plan-summary .plan-edit-icon{color:#d1e1ff}
+.report-workspace button.daily-plan-summary:hover{background:#17489e;border-color:#2861ca}
+.report-workspace .daily-plan-summary.is-readonly{cursor:default}
+.report-workspace .sheet{box-shadow:0 5px 18px rgba(35,57,87,.04);border-radius:0 0 10px 10px}
+.report-workspace .sheet th{height:62px;padding:10px 8px;background:#29466d;color:#f2f6ff;border-right-color:#3b567b;border-bottom-color:#203c62;font-size:12px;font-weight:600;line-height:1.4}
+.report-workspace .sheet td{border-right-color:#edf1f6;border-bottom-color:#e5ebf2;font-size:14px}
+.report-workspace .sheet td:first-child{color:#344b69;font-weight:550;border-right-color:#dce5ef}
+.report-workspace .sheet th.hovered-column,.report-workspace .sheet th.active-column{background:#365f91;color:#fff}
+.report-workspace .sheet .plan-efficiency{display:inline-block;width:auto;min-width:58px;padding:0 7px;border-radius:5px;background:#dce9ff;color:#174ea6;font-size:12px;line-height:25px;font-weight:600}
+.report-workspace .sheet tfoot td{height:46px;background:#c7d9f3;border-top-color:#84a8da;color:#163966;border-right-color:#b0c8e9}
+.report-workspace .sheet tfoot td:first-child{background:#b9cfed;font-size:11px;letter-spacing:.06em;font-weight:700}
+body.table-fullscreen .report-workspace .toolbar{border-radius:0}
+@media(max-width:1100px){body.report-page>main>header{padding-inline:16px}.report-workspace .toolbar{gap:9px;padding-inline:10px}.report-workspace .daily-plan-summary{gap:12px}.report-workspace #employee-filter{min-width:170px}}

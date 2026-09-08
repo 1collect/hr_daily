@@ -46,8 +46,8 @@ func TestEmployeeCanBeCreatedWithoutPlan(t *testing.T) {
 
 func TestTotalsUsesPlanOnce(t *testing.T) {
 	rows := []reportRow{{InterviewedCandidates: 2, PlannedReserve: 4, HiredWorkers: []hiredWorker{{FullName: "Первый"}}, EfficiencyPlan: 10}, {InterviewedCandidates: 3, PlannedReserve: 6, HiredWorkers: []hiredWorker{{FullName: "Второй"}}, EfficiencyPlan: 10}}
-	got := totals(rows, 10)
-	if got["efficiencyPlan"] != 10 || got["efficiency"] != 50.0 {
+	got := totals(rows, candidatePlans{Invited: 8, Hired: 10})
+	if got["efficiencyPlan"] != 10 || got["hiringEfficiency"] != 20.0 {
 		t.Fatalf("unexpected totals: %#v", got)
 	}
 	if got["plannedReserve"] != 10 {
@@ -62,8 +62,8 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	f := excelize.NewFile()
 	f.SetSheetName("Sheet1", "РП")
 	rows := []exportSummaryRow{
-		{Office: "РП 1", Interviewed: 3, Plan: 10, TotalPlan: 10},
-		{Office: "РП 2", Interviewed: 2, Plan: 10, TotalPlan: 10},
+		{Office: "РП 1", Invited: 4, Hired: 3, Plan: 10, TotalPlan: 10, InvitationPlan: 8, TotalInvitationPlan: 8},
+		{Office: "РП 2", Invited: 2, Hired: 2, Plan: 10, TotalPlan: 10, InvitationPlan: 8, TotalInvitationPlan: 8},
 	}
 	writeExportSummarySheet(f, exportKinds["rp"], rows, nil, newExportStyles(f))
 	if header, err := f.GetCellValue("РП", "F1"); err != nil || header != "Планируемый резерв" {
@@ -72,12 +72,50 @@ func TestExportTotalUsesPeriodPlanOnce(t *testing.T) {
 	if header, err := f.GetCellValue("РП", "H1"); err != nil || header != "Количество принятых работников" {
 		t.Fatalf("hired workers header=%q, err=%v", header, err)
 	}
-	got, err := f.GetCellValue("РП", "J4")
+	if header, _ := f.GetCellValue("РП", "J1"); header != "% исполнения плана по приглашенным кандидатам" {
+		t.Fatalf("invitation efficiency header=%q", header)
+	}
+	if header, _ := f.GetCellValue("РП", "K1"); header != "% исполнения плана по принятым кандидатам" {
+		t.Fatalf("hiring efficiency header=%q", header)
+	}
+	got, err := f.GetCellValue("РП", "K4")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "50.00" {
 		t.Fatalf("export total efficiency=%q, want 50.00", got)
+	}
+}
+
+func TestApplyDebtsterExportSnapshotUsesFinalDateCounts(t *testing.T) {
+	rows := []exportSummaryRow{
+		{DebtsterDepartmentID: 12, OpenVacancies: 90, Interns: 80, PlannedReserve: 70},
+		{DebtsterDepartmentID: 18, OpenVacancies: 9, Interns: 8, PlannedReserve: 7},
+		{Office: "  РП АЛМАТЫ ", OpenVacancies: 60, Interns: 50, PlannedReserve: 40},
+	}
+	sections := []employeeExportSection{{Rows: []exportSummaryRow{
+		{DebtsterDepartmentID: 12, OpenVacancies: 60, Interns: 50, PlannedReserve: 40},
+	}}}
+	snapshot := []debtsterVacancyReport{{
+		ID:                     12,
+		RP:                     "РП Алматы",
+		VacantPositionsCount:   3,
+		TraineesCount:          4,
+		PlannedDismissalsCount: 5,
+		PlannedDismissals: []debtsterPlannedDismissal{{
+			FirstName: "Не должен попасть в XLSX",
+		}},
+	}}
+
+	applyDebtsterExportSnapshot(rows, sections, snapshot)
+
+	for _, item := range []exportSummaryRow{rows[0], rows[2], sections[0].Rows[0]} {
+		if item.OpenVacancies != 3 || item.Interns != 4 || item.PlannedReserve != 5 {
+			t.Fatalf("Debtster values were not applied: %#v", item)
+		}
+	}
+	if rows[1].OpenVacancies != 0 || rows[1].Interns != 0 || rows[1].PlannedReserve != 0 {
+		t.Fatalf("stale stored values remained without a matching Debtster snapshot: %#v", rows[1])
 	}
 }
 
@@ -137,5 +175,29 @@ func TestUniqueUserIDs(t *testing.T) {
 	got := uniqueUserIDs([]string{" first ", "second", "first", "", "second"})
 	if len(got) != 2 || got[0] != "first" || got[1] != "second" {
 		t.Fatalf("unexpected unique ids: %#v", got)
+	}
+}
+
+func TestValidReportUnitType(t *testing.T) {
+	for _, value := range []string{"rp", "main_office"} {
+		if !validReportUnitType(value) {
+			t.Fatalf("valid report unit type rejected: %s", value)
+		}
+	}
+	for _, value := range []string{"", "main-office", "office"} {
+		if validReportUnitType(value) {
+			t.Fatalf("invalid report unit type accepted: %s", value)
+		}
+	}
+}
+
+func TestApplyAssignedFlagsKeepsAllRows(t *testing.T) {
+	rows := []reportRow{{OfficeID: "12"}, {OfficeID: "18"}, {OfficeID: "24"}}
+	applyAssignedFlags(rows, map[string]bool{"12": true, "24": true})
+	if !rows[0].Assigned || rows[1].Assigned || !rows[2].Assigned {
+		t.Fatalf("unexpected assigned flags: %#v", rows)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows were filtered: got %d, want 3", len(rows))
 	}
 }

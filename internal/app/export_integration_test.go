@@ -28,7 +28,7 @@ func TestExportQueriesAgainstPostgres(t *testing.T) {
 	file := excelize.NewFile()
 	styles := newExportStyles(file)
 	for index, kind := range []exportKindConfig{exportKinds["rp"], exportKinds["main_office"]} {
-		rows, sections, loadErr := a.loadExportData(ctx, kind, "2026-08-01", "2026-08-31")
+		rows, sections, loadErr := a.loadExportData(ctx, kind, "2026-08-01", "2026-08-31", "")
 		if loadErr != nil {
 			t.Fatalf("load %s export: %v", kind.Kind, loadErr)
 		}
@@ -38,7 +38,7 @@ func TestExportQueriesAgainstPostgres(t *testing.T) {
 			_, _ = file.NewSheet(kind.Sheet)
 		}
 		writeExportSummarySheet(file, kind, rows, sections, styles)
-		if detailErr := a.writeExportDetailSheets(ctx, file, kind, "2026-08-01", "2026-08-31", styles); detailErr != nil {
+		if detailErr := a.writeExportDetailSheets(ctx, file, kind, "2026-08-01", "2026-08-31", "", styles); detailErr != nil {
 			t.Fatalf("load %s export details: %v", kind.Kind, detailErr)
 		}
 		hiredSheet := "Принятые " + kind.Sheet
@@ -53,6 +53,13 @@ func TestExportQueriesAgainstPostgres(t *testing.T) {
 		}
 		if header, _ := file.GetCellValue(kind.Sheet, "H1"); header != "Количество принятых работников" {
 			t.Fatalf("%s H1 is %q, want hired workers", kind.Sheet, header)
+		}
+		scopedRows, scopedSections, scopedErr := a.loadExportData(ctx, kind, "2026-08-01", "2026-08-31", "00000000-0000-0000-0000-000000000000")
+		if scopedErr != nil {
+			t.Fatalf("load scoped %s export: %v", kind.Kind, scopedErr)
+		}
+		if len(scopedRows) != 0 || len(scopedSections) != 0 {
+			t.Fatalf("scoped %s export leaked rows: rows=%d sections=%d", kind.Kind, len(scopedRows), len(scopedSections))
 		}
 	}
 	wantSheets := []string{"РП", "Принятые РП", "Списки ФИО РП", "ГО", "Принятые ГО", "Списки ФИО ГО"}
@@ -136,7 +143,7 @@ func TestDebtsterDepartmentsAreStoredDirectlyInReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aggregateRows, err := a.loadAggregateRows(ctx, date, "", 0)
+	aggregateRows, err := a.loadAggregateRows(ctx, date, "", candidatePlans{})
 	if err != nil {
 		t.Fatal(err)
 	}

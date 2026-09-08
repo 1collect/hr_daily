@@ -139,19 +139,24 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		plan, err := a.mainOfficeEfficiencyPlanTotal(ctx, date, employeeID)
+		plans, err := a.candidatePlanTotals(ctx, date, employeeID, "main_office")
 		if err != nil {
 			serverError(w, err)
 			return
 		}
-		rows, err := a.loadMainOfficeAggregateRows(ctx, date, employeeID, plan)
+		rows, err := a.loadMainOfficeAggregateRows(ctx, date, employeeID, plans)
 		if err != nil {
+			serverError(w, err)
+			return
+		}
+		if err = a.applyResponsibleCounts(ctx, date, "main_office", rows); err != nil {
 			serverError(w, err)
 			return
 		}
 		var accessCount int
 		_ = a.db.QueryRow(ctx, `SELECT count(*) FROM report_access_grants WHERE report_date=$1 AND expires_at>now()`, date).Scan(&accessCount)
-		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
+		applyCandidatePlans(rows, plans)
+		jsonOut(w, 200, map[string]any{"report": map[string]any{"id": "", "date": date, "status": "read_only", "editable": false, "accessCount": accessCount}, "rows": rows, "plan": plans.Hired, "invitationPlan": plans.Invited, "hiringPlan": plans.Hired, "totals": totals(rows, plans)})
 		return
 	}
 	var reportID string
@@ -164,7 +169,9 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = a.db.Exec(ctx, `INSERT INTO main_office_report_rows(report_id,main_office_id,main_office_name_snapshot,main_office_sort_order_snapshot)
-		SELECT $1,id,name,sort_order FROM main_offices WHERE active ON CONFLICT DO NOTHING`, reportID)
+		SELECT $1,o.id,o.name,o.sort_order FROM main_offices o
+		JOIN report_unit_responsibles a ON a.report_date=$3 AND a.report_type='main_office' AND a.unit_id=o.id::text AND a.user_id=$2
+		WHERE o.active ON CONFLICT DO NOTHING`, reportID, claims.UserID, date)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -174,17 +181,19 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	plan, err := a.mainOfficeEfficiencyPlanTotal(ctx, date, claims.UserID)
+	rows, err = a.filterAssignedRows(ctx, date, "main_office", claims.UserID, rows)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	for index := range rows {
-		rows[index].EfficiencyPlan = plan
-		rows[index].Efficiency = Efficiency(rows[index].InterviewedCandidates, plan)
+	plans, err := a.candidatePlanTotals(ctx, date, claims.UserID, "main_office")
+	if err != nil {
+		serverError(w, err)
+		return
 	}
+	applyCandidatePlans(rows, plans)
 	editable := a.hasReportEditAccess(ctx, claims.UserID, date)
-	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": "draft", "editable": editable}, "rows": rows, "plan": plan, "totals": totals(rows, plan)})
+	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": "draft", "editable": editable}, "rows": rows, "plan": plans.Hired, "invitationPlan": plans.Invited, "hiringPlan": plans.Hired, "totals": totals(rows, plans)})
 }
 
 func (a *App) mainOfficeEfficiencyPlanTotal(ctx context.Context, date, ownerID string) (int, error) {
@@ -249,7 +258,7 @@ func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]
 	return rows, nil
 }
 
-func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID string, plan int) ([]reportRow, error) {
+func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID string, plans candidatePlans) ([]reportRow, error) {
 	q, err := a.db.Query(ctx, `WITH relevant_reports AS (
 		SELECT rp.* FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2)
@@ -280,8 +289,9 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 		row.People = map[string][]string{}
 		row.PeopleDetails = map[string][]hiredDetail{}
 		row.Contributions = map[string][]cellContribution{}
-		row.EfficiencyPlan = plan
-		row.Efficiency = Efficiency(row.InterviewedCandidates, plan)
+		row.EfficiencyPlan = plans.Hired
+		row.InvitationPlan = plans.Invited
+		row.HiringPlan = plans.Hired
 		rows = append(rows, row)
 	}
 	if err = q.Err(); err != nil {
@@ -291,7 +301,9 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	for index := range rows {
 		byOffice[rows[index].OfficeID] = &rows[index]
 	}
-	contributions, err := a.db.Query(ctx, `SELECT rr.main_office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,(SELECT count(*) FROM main_office_hired_workers h WHERE h.report_row_id=rr.id),COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+	contributions, err := a.db.Query(ctx, `SELECT rr.main_office_id,COALESCE(NULLIF(rp.owner_name_snapshot,''),u.username),rr.invited_candidates,rr.interviewed_candidates,rr.interns,rr.reserve_candidates,rr.dismissed_workers,(SELECT count(*) FROM main_office_hired_workers h WHERE h.report_row_id=rr.id),
+		COALESCE((SELECT d.invited_plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_invitation_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
+		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM main_office_reports rp JOIN users u ON u.id=rp.owner_user_id AND u.active AND NOT u.system JOIN main_office_report_rows rr ON rr.report_id=rp.id
 		WHERE rp.report_date=$1 AND ($2='' OR rp.owner_user_id::text=$2) ORDER BY rp.owner_name_snapshot`, date, ownerID)
 	if err != nil {
@@ -299,8 +311,8 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 	}
 	for contributions.Next() {
 		var officeID, name string
-		var invited, interviewed, interns, reserve, dismissed, hired, employeePlan int
-		if err = contributions.Scan(&officeID, &name, &invited, &interviewed, &interns, &reserve, &dismissed, &hired, &employeePlan); err != nil {
+		var invited, interviewed, interns, reserve, dismissed, hired, invitationPlan, hiringPlan int
+		if err = contributions.Scan(&officeID, &name, &invited, &interviewed, &interns, &reserve, &dismissed, &hired, &invitationPlan, &hiringPlan); err != nil {
 			contributions.Close()
 			return nil, err
 		}
@@ -309,7 +321,8 @@ func (a *App) loadMainOfficeAggregateRows(ctx context.Context, date, ownerID str
 			for key, value := range values {
 				row.Contributions[key] = append(row.Contributions[key], cellContribution{Name: name, Value: float64(value)})
 			}
-			row.Contributions["efficiency"] = append(row.Contributions["efficiency"], cellContribution{Name: name, Value: Efficiency(interviewed, employeePlan)})
+			row.Contributions["invitationEfficiency"] = append(row.Contributions["invitationEfficiency"], cellContribution{Name: name, Value: Efficiency(invited, invitationPlan)})
+			row.Contributions["hiringEfficiency"] = append(row.Contributions["hiringEfficiency"], cellContribution{Name: name, Value: Efficiency(hired, hiringPlan)})
 		}
 	}
 	contributions.Close()
@@ -406,8 +419,13 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	var mainOfficeID, reportDate string
-	var plan int
-	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text,COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0) FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2 AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &plan)
+	var invitationPlan, hiringPlan int
+	err = tx.QueryRow(ctx, `SELECT rr.main_office_id,rp.report_date::text,
+		COALESCE((SELECT d.invited_plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_invitation_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
+		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
+		FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_date=rp.report_date AND a.report_type='main_office' AND a.unit_id=rr.main_office_id::text AND a.user_id=$2)
+		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &invitationPlan, &hiringPlan)
 	if err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return
@@ -423,7 +441,8 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = tx.Exec(ctx, `DELETE FROM main_office_hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
-	for _, worker := range cleanHiredWorkers(input.HiredWorkers) {
+	cleanHires := cleanHiredWorkers(input.HiredWorkers)
+	for _, worker := range cleanHires {
 		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
 			serverError(w, err)
 			return
@@ -448,5 +467,6 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	a.log(ctx, "main_office_report_row.updated", "main_office_report_row", r.PathValue("id"))
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "openVacancies", "value": input.OpenVacancies, "updatedBy": claims.Username})
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "plannedReserve", "value": input.PlannedReserve, "updatedBy": claims.Username})
-	jsonOut(w, 200, map[string]any{"efficiency": Efficiency(input.InterviewedCandidates, plan), "hiredCount": len(cleanHiredWorkers(input.HiredWorkers))})
+	hiringEfficiency := Efficiency(len(cleanHires), hiringPlan)
+	jsonOut(w, 200, map[string]any{"efficiency": hiringEfficiency, "invitationEfficiency": Efficiency(input.InvitedCandidates, invitationPlan), "hiringEfficiency": hiringEfficiency, "hiredCount": len(cleanHires)})
 }

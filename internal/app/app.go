@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -90,6 +91,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("PUT /api/users/{id}/candidate-plans", a.updateCandidatePlans)
 	m.HandleFunc("DELETE /api/users/{id}", a.deleteUser)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
+	m.HandleFunc("GET /api/trainees", a.trainees)
 	m.HandleFunc("GET /api/daily-plans", a.dailyPlans)
 	m.HandleFunc("PUT /api/daily-plans", a.updateDailyPlans)
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
@@ -109,6 +111,29 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /ws/reports", a.reportWebsocket)
 	m.HandleFunc("/", a.staticFile)
 	return requestLog(recoverer(a.auth(m)))
+}
+
+func (a *App) trainees(w http.ResponseWriter, r *http.Request) {
+	date := r.URL.Query().Get("report_date")
+	if !validDate(date) {
+		problem(w, http.StatusUnprocessableEntity, "Дата должна иметь формат YYYY-MM-DD")
+		return
+	}
+	departmentID := 0
+	if value := r.URL.Query().Get("department_id"); value != "" {
+		var err error
+		departmentID, err = strconv.Atoi(value)
+		if err != nil || departmentID <= 0 {
+			problem(w, http.StatusUnprocessableEntity, "department_id должен быть положительным целым числом")
+			return
+		}
+	}
+	rows, err := fetchDebtsterTrainees(r.Context(), a.httpClient, a.debtsterAPI, date, departmentID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonOut(w, http.StatusOK, rows)
 }
 
 func (a *App) staticFile(w http.ResponseWriter, r *http.Request) {

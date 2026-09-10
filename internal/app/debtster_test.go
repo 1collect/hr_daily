@@ -117,6 +117,44 @@ func TestFetchAndApplyDebtsterVacancies(t *testing.T) {
 	}
 }
 
+func TestFetchDebtsterTrainees(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != debtsterTraineesPath {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("report_date") != "2026-09-10" || r.URL.Query().Get("department_id") != "15" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error_code":0,"status":"success","message":"","data":[{"report_type_id":2,"department":"РП Алматы","report_date":"2026-09-10","reporter_id":41,"trainee_id":null,"full_name":"Иванов Иван","status_id":"стажируется по теории","source":"ОК","interview_date":"2026-09-01","security_approval_date":"2026-09-02","internship_start_date":"2026-09-03","task_start_date":null,"note":"Изучает материалы","file_name":"","file_object_key":""}]}`))
+	}))
+	defer server.Close()
+
+	rows, err := fetchDebtsterTrainees(context.Background(), server.Client(), server.URL, "2026-09-10", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Department != "РП Алматы" || rows[0].TraineeID != nil || rows[0].TaskStartDate != nil {
+		t.Fatalf("unexpected trainees: %#v", rows)
+	}
+}
+
+func TestFetchDebtsterTraineesReturnsEmptySlice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error_code":0,"status":"success","data":null}`))
+	}))
+	defer server.Close()
+
+	rows, err := fetchDebtsterTrainees(context.Background(), server.Client(), server.URL, "2026-09-10", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows == nil || len(rows) != 0 {
+		t.Fatalf("got %#v, want a non-nil empty slice", rows)
+	}
+}
+
 func TestApplyDebtsterTraineeChanges(t *testing.T) {
 	rows := []reportRow{{OfficeID: "12"}, {OfficeID: "18"}, {OfficeID: "24"}}
 	vacancies := []debtsterVacancyReport{

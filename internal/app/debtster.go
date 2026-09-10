@@ -17,6 +17,7 @@ import (
 const (
 	debtsterDepartmentsPath = "/api/v1/list/departments/hr-report-submitters"
 	debtsterVacanciesPath   = "/api/v1/report/vacancies"
+	debtsterTraineesPath    = "/api/v1/report/trainees"
 	debtsterReportsFrom     = "2026-08-28"
 )
 
@@ -70,6 +71,72 @@ type debtsterVacancyReport struct {
 	RecruitmentCount       int                        `json:"recruitment_count"`
 	PlannedDismissalsCount int                        `json:"planned_dismissals_count"`
 	PlannedDismissals      []debtsterPlannedDismissal `json:"planned_dismissals"`
+}
+
+type debtsterTraineeReport struct {
+	ReportTypeID         int     `json:"report_type_id"`
+	Department           string  `json:"department"`
+	ReportDate           string  `json:"report_date"`
+	ReporterID           int     `json:"reporter_id"`
+	TraineeID            *int    `json:"trainee_id"`
+	FullName             string  `json:"full_name"`
+	StatusID             string  `json:"status_id"`
+	Source               string  `json:"source"`
+	InterviewDate        *string `json:"interview_date"`
+	SecurityApprovalDate *string `json:"security_approval_date"`
+	InternshipStartDate  *string `json:"internship_start_date"`
+	TaskStartDate        *string `json:"task_start_date"`
+	Note                 string  `json:"note"`
+	FileName             string  `json:"file_name"`
+	FileObjectKey        string  `json:"file_object_key"`
+}
+
+func fetchDebtsterTrainees(ctx context.Context, client *http.Client, baseURL, date string, departmentID int) ([]debtsterTraineeReport, error) {
+	values := url.Values{"report_date": []string{date}}
+	if departmentID > 0 {
+		values.Set("department_id", strconv.Itoa(departmentID))
+	}
+	endpoint := strings.TrimRight(baseURL, "/") + debtsterTraineesPath + "?" + values.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create trainees request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request trainees: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("request trainees: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
+	if err != nil {
+		return nil, fmt.Errorf("read trainees: %w", err)
+	}
+	if len(body) > 4<<20 {
+		return nil, fmt.Errorf("decode trainees: response is larger than 4 MiB")
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '<' {
+		return nil, fmt.Errorf("decode trainees: upstream returned HTML instead of JSON")
+	}
+	var payload struct {
+		ErrorCode int                     `json:"error_code"`
+		Status    string                  `json:"status"`
+		Message   string                  `json:"message"`
+		Data      []debtsterTraineeReport `json:"data"`
+	}
+	if err = json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode trainees: %w", err)
+	}
+	if payload.ErrorCode != 0 || (payload.Status != "" && payload.Status != "success") {
+		return nil, fmt.Errorf("request trainees: Debtster error %d: %s", payload.ErrorCode, strings.TrimSpace(payload.Message))
+	}
+	if payload.Data == nil {
+		payload.Data = []debtsterTraineeReport{}
+	}
+	return payload.Data, nil
 }
 
 func fetchDebtsterVacancies(ctx context.Context, client *http.Client, baseURL, date string) ([]debtsterVacancyReport, error) {

@@ -73,8 +73,7 @@ input[type=number]{appearance:textfield;-moz-appearance:textfield}input[type=num
 .trainee-matches{list-style:none;margin:0;padding:0;display:grid;gap:5px}.trainee-matches li{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:26px}.trainee-matches li+li{padding-top:5px;border-top:1px solid var(--line)}.trainee-matches span{min-width:0;color:#1e293b;font-weight:500;line-height:1.4}.trainee-matches small{flex-shrink:0;padding:2px 7px;border:1px solid #dce7fd;border-radius:4px;background:#eff6ff;color:#3568c7;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
 .trainee-sheet .trainee-table-empty{height:160px;background:#fff!important;color:var(--muted);font-weight:400;text-align:center}.trainee-sheet .trainee-table-empty:hover{color:var(--muted)}
 
-/* Number colors follow the search summary categories, including on hover. */
-.trainee-sheet tbody tr.trainee-matched td.trainee-number-cell{background:#eaf1ff;color:#315b9a;font-weight:650}
+/* Highlight numbers only for director matches and unmatched OK-source rows. */
 .trainee-sheet tbody tr.trainee-director-match td.trainee-number-cell{background:#ffe5ec;color:#a13b53;font-weight:650}
 .trainee-sheet tbody tr.trainee-ok-unmatched td.trainee-number-cell{background:#e2e7ed;color:#526175;font-weight:650}
 

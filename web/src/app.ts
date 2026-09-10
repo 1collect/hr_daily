@@ -145,7 +145,6 @@ function traineeRowClass(row:TraineeReport){
  if(!Array.isArray(row.matches))return '';
  if(source==='ДИР'&&row.matches.length)return 'trainee-director-match';
  if(source==='ОК'&&row.matches.length===0)return 'trainee-ok-unmatched';
- if(row.matches.length)return 'trainee-matched';
  return '';
 }
 function traineeSearchResults(row:TraineeReport){

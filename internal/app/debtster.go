@@ -74,21 +74,22 @@ type debtsterVacancyReport struct {
 }
 
 type debtsterTraineeReport struct {
-	ReportTypeID         int     `json:"report_type_id"`
-	Department           string  `json:"department"`
-	ReportDate           string  `json:"report_date"`
-	ReporterID           int     `json:"reporter_id"`
-	TraineeID            *int    `json:"trainee_id"`
-	FullName             string  `json:"full_name"`
-	StatusID             string  `json:"status_id"`
-	Source               string  `json:"source"`
-	InterviewDate        *string `json:"interview_date"`
-	SecurityApprovalDate *string `json:"security_approval_date"`
-	InternshipStartDate  *string `json:"internship_start_date"`
-	TaskStartDate        *string `json:"task_start_date"`
-	Note                 string  `json:"note"`
-	FileName             string  `json:"file_name"`
-	FileObjectKey        string  `json:"file_object_key"`
+	Matches              []traineeMatch `json:"matches"`
+	ReportTypeID         int            `json:"report_type_id"`
+	Department           string         `json:"department"`
+	ReportDate           string         `json:"report_date"`
+	ReporterID           int            `json:"reporter_id"`
+	TraineeID            *int           `json:"trainee_id"`
+	FullName             string         `json:"full_name"`
+	StatusID             string         `json:"status_id"`
+	Source               string         `json:"source"`
+	InterviewDate        *string        `json:"interview_date"`
+	SecurityApprovalDate *string        `json:"security_approval_date"`
+	InternshipStartDate  *string        `json:"internship_start_date"`
+	TaskStartDate        *string        `json:"task_start_date"`
+	Note                 string         `json:"note"`
+	FileName             string         `json:"file_name"`
+	FileObjectKey        string         `json:"file_object_key"`
 }
 
 func fetchDebtsterTrainees(ctx context.Context, client *http.Client, baseURL, date string, departmentID int) ([]debtsterTraineeReport, error) {

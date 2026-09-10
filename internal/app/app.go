@@ -114,6 +114,15 @@ func (a *App) routes() http.Handler {
 }
 
 func (a *App) trainees(w http.ResponseWriter, r *http.Request) {
+	threshold := 55
+	if value := r.URL.Query().Get("threshold"); value != "" {
+		var err error
+		threshold, err = strconv.Atoi(value)
+		if err != nil || threshold < 1 || threshold > 100 {
+			problem(w, http.StatusUnprocessableEntity, "Порог поиска должен быть от 1 до 100")
+			return
+		}
+	}
 	date := r.URL.Query().Get("report_date")
 	if !validDate(date) {
 		problem(w, http.StatusUnprocessableEntity, "Дата должна иметь формат YYYY-MM-DD")
@@ -132,6 +141,24 @@ func (a *App) trainees(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		serverError(w, err)
 		return
+	}
+	if len(rows) > 0 {
+		names, err := a.loadTraineeSearchNames(r.Context(), date)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		index := newTraineeNameIndex(names)
+		cache := map[string][]traineeMatch{}
+		for i := range rows {
+			name := rows[i].FullName
+			matches, ok := cache[name]
+			if !ok {
+				matches = index.search(name, threshold)
+				cache[name] = matches
+			}
+			rows[i].Matches = matches
+		}
 	}
 	jsonOut(w, http.StatusOK, rows)
 }

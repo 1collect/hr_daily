@@ -7,11 +7,13 @@ import (
 )
 
 type reportResponsibleUser struct {
-	ID         string `json:"id"`
-	FirstName  string `json:"firstName"`
-	LastName   string `json:"lastName"`
-	MiddleName string `json:"middleName"`
-	Assigned   bool   `json:"assigned"`
+	ID           string `json:"id"`
+	FirstName    string `json:"firstName"`
+	LastName     string `json:"lastName"`
+	MiddleName   string `json:"middleName"`
+	Assigned     bool   `json:"assigned"`
+	AssignedFrom string `json:"assignedFrom,omitempty"`
+	AssignedTo   string `json:"assignedTo,omitempty"`
 }
 
 type reportResponsiblesInput struct {
@@ -59,12 +61,16 @@ func (a *App) reportResponsibles(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Не указан вид отчёта или подразделение")
 		return
 	}
-	q, err := a.db.Query(r.Context(), `SELECT u.id,e.first_name,e.last_name,e.middle_name,EXISTS(
-		SELECT 1 FROM report_unit_responsibles r
-		WHERE r.user_id=u.id AND r.report_type=$2 AND r.unit_id=$3
-		  AND r.assigned_from <= $1 AND (r.assigned_to IS NULL OR r.assigned_to >= $1)
-	)
+	q, err := a.db.Query(r.Context(), `SELECT u.id,e.first_name,e.last_name,e.middle_name,
+		a.assigned_from IS NOT NULL,COALESCE(a.assigned_from::text,''),COALESCE(a.assigned_to::text,'')
 		FROM users u JOIN employees e ON e.id=u.employee_id
+		LEFT JOIN LATERAL (
+			SELECT r.assigned_from,r.assigned_to
+			FROM report_unit_responsibles r
+			WHERE r.user_id=u.id AND r.report_type=$2 AND r.unit_id=$3
+			  AND r.assigned_from <= $1 AND (r.assigned_to IS NULL OR r.assigned_to >= $1)
+			ORDER BY r.assigned_from DESC LIMIT 1
+		) a ON true
 		WHERE u.role='employee' AND u.active AND NOT u.system
 		ORDER BY e.last_name,e.first_name,e.middle_name`, date, reportType, unitID)
 	if err != nil {
@@ -75,7 +81,7 @@ func (a *App) reportResponsibles(w http.ResponseWriter, r *http.Request) {
 	out := []reportResponsibleUser{}
 	for q.Next() {
 		var item reportResponsibleUser
-		if err = q.Scan(&item.ID, &item.FirstName, &item.LastName, &item.MiddleName, &item.Assigned); err != nil {
+		if err = q.Scan(&item.ID, &item.FirstName, &item.LastName, &item.MiddleName, &item.Assigned, &item.AssignedFrom, &item.AssignedTo); err != nil {
 			serverError(w, err)
 			return
 		}

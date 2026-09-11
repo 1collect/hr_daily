@@ -170,7 +170,7 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = a.db.Exec(ctx, `INSERT INTO main_office_report_rows(report_id,main_office_id,main_office_name_snapshot,main_office_sort_order_snapshot)
 		SELECT $1,o.id,o.name,o.sort_order FROM main_offices o
-		JOIN report_unit_responsibles a ON a.report_date=$3 AND a.report_type='main_office' AND a.unit_id=o.id::text AND a.user_id=$2
+		JOIN report_unit_responsibles a ON a.assigned_from<=$3 AND (a.assigned_to IS NULL OR a.assigned_to>=$3) AND a.report_type='main_office' AND a.unit_id=o.id::text AND a.user_id=$2
 		WHERE o.active ON CONFLICT DO NOTHING`, reportID, claims.UserID, date)
 	if err != nil {
 		serverError(w, err)
@@ -424,7 +424,7 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 		COALESCE((SELECT d.invited_plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_invitation_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0),
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='main_office'),(SELECT plan_count FROM main_office_employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM main_office_report_rows rr JOIN main_office_reports rp ON rp.id=rr.report_id WHERE rr.id=$1 AND rp.owner_user_id=$2
-		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_date=rp.report_date AND a.report_type='main_office' AND a.unit_id=rr.main_office_id::text AND a.user_id=$2)
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.assigned_from<=rp.report_date AND (a.assigned_to IS NULL OR a.assigned_to>=rp.report_date) AND a.report_type='main_office' AND a.unit_id=rr.main_office_id::text AND a.user_id=$2)
 		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&mainOfficeID, &reportDate, &invitationPlan, &hiringPlan)
 	if err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")

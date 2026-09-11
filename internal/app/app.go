@@ -652,7 +652,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 		COALESCE((SELECT d.plan_count FROM daily_efficiency_plan_overrides d WHERE d.user_id=rp.owner_user_id AND d.report_date=rp.report_date AND d.report_type='rp'),(SELECT plan_count FROM employee_efficiency_plans p WHERE p.user_id=rp.owner_user_id AND p.effective_from<=rp.report_date ORDER BY p.effective_from DESC LIMIT 1),0)
 		FROM report_rows rr JOIN reports rp ON rp.id=rr.report_id
 		WHERE rr.id=$1 AND rp.owner_user_id=$2 AND rp.status='draft'
-		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.report_date=rp.report_date AND a.report_type='rp' AND a.unit_id=COALESCE(rr.debtster_department_id::text,rr.office_id::text) AND a.user_id=$2)
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.assigned_from<=rp.report_date AND (a.assigned_to IS NULL OR a.assigned_to>=rp.report_date) AND a.report_type='rp' AND a.unit_id=COALESCE(rr.debtster_department_id::text,rr.office_id::text) AND a.user_id=$2)
 		AND (rp.report_date=$3 OR EXISTS(SELECT 1 FROM report_access_grants g WHERE g.report_date=rp.report_date AND g.user_id=$2 AND g.expires_at>now()))`, r.PathValue("id"), claims.UserID, localToday()).Scan(&officeID, &reportDate, &invitationPlan, &hiringPlan); err != nil {
 		problem(w, 409, "Доступ к редактированию отчёта закрыт")
 		return

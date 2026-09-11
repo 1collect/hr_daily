@@ -112,6 +112,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("PUT /api/main-offices/order", a.reorderMainOffices)
 	m.HandleFunc("PUT /api/main-offices/{id}", a.updateMainOffice)
 	m.HandleFunc("GET /api/main-office/bootstrap", a.mainOfficeBootstrap)
+	m.HandleFunc("POST /api/main-office/report/copy-previous", a.copyPreviousMainOfficeReport)
 	m.HandleFunc("PUT /api/main-office/report/rows/{id}", a.updateMainOfficeRow)
 	m.HandleFunc("GET /ws/reports", a.reportWebsocket)
 	m.HandleFunc("/", a.staticFile)

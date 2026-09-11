@@ -20,6 +20,22 @@ func TestEfficiency(t *testing.T) {
 	}
 }
 
+func TestPriorBusinessDate(t *testing.T) {
+	tests := map[string]string{
+		"2026-09-11": "2026-09-10",
+		"2026-09-07": "2026-09-04",
+	}
+	for date, want := range tests {
+		got, ok := priorBusinessDate(date)
+		if !ok || got != want {
+			t.Fatalf("priorBusinessDate(%q) = %q, %v; want %q, true", date, got, ok, want)
+		}
+	}
+	if _, ok := priorBusinessDate("not-a-date"); ok {
+		t.Fatal("invalid date accepted")
+	}
+}
+
 func TestCleanHiredWorkersKeepsOptionalPosition(t *testing.T) {
 	got := cleanHiredWorkers([]hiredWorker{
 		{FullName: "  Иванов Иван  ", Position: "  Бухгалтер  "},

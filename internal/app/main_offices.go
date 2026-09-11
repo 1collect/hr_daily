@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (a *App) mainOffices(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +194,27 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	applyCandidatePlans(rows, plans)
 	editable := a.hasReportEditAccess(ctx, claims.UserID, date)
-	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": "draft", "editable": editable}, "rows": rows, "plan": plans.Hired, "invitationPlan": plans.Invited, "hiringPlan": plans.Hired, "totals": totals(rows, plans)})
+	previousFirstColumnHasData, err := a.mainOfficePreviousFirstColumnHasData(ctx, reportID, claims.UserID, date)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonOut(w, 200, map[string]any{"report": map[string]any{"id": reportID, "date": date, "status": "draft", "editable": editable, "previousFirstColumnHasData": previousFirstColumnHasData}, "rows": rows, "plan": plans.Hired, "invitationPlan": plans.Invited, "hiringPlan": plans.Hired, "totals": totals(rows, plans)})
+}
+
+func (a *App) mainOfficePreviousFirstColumnHasData(ctx context.Context, reportID, userID, date string) (bool, error) {
+	previousDate, ok := priorBusinessDate(date)
+	if !ok {
+		return false, nil
+	}
+	var hasData bool
+	err := a.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM main_office_report_rows target
+		JOIN main_office_daily_shared source ON source.report_date=$4 AND source.main_office_id=target.main_office_id
+		WHERE target.report_id=$1 AND source.open_vacancies<>0
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.user_id=$2
+		AND a.report_type='main_office' AND a.unit_id=target.main_office_id::text AND a.assigned_from<=$3
+		AND (a.assigned_to IS NULL OR a.assigned_to>=$3)))`, reportID, userID, date, previousDate).Scan(&hasData)
+	return hasData, err
 }
 
 func (a *App) mainOfficeEfficiencyPlanTotal(ctx context.Context, date, ownerID string) (int, error) {
@@ -469,4 +490,129 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	a.reports.send(reportDate, map[string]any{"type": "main_office_report_updated", "date": reportDate, "officeId": mainOfficeID, "field": "plannedReserve", "value": input.PlannedReserve, "updatedBy": claims.Username})
 	hiringEfficiency := Efficiency(len(cleanHires), hiringPlan)
 	jsonOut(w, 200, map[string]any{"efficiency": hiringEfficiency, "invitationEfficiency": Efficiency(input.InvitedCandidates, invitationPlan), "hiringEfficiency": hiringEfficiency, "hiredCount": len(cleanHires)})
+}
+
+type copyPreviousMainOfficeReportInput struct {
+	Date string `json:"date"`
+}
+
+func priorBusinessDate(value string) (string, bool) {
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return "", false
+	}
+	for {
+		date = date.AddDate(0, 0, -1)
+		if date.Weekday() != time.Saturday && date.Weekday() != time.Sunday {
+			return date.Format("2006-01-02"), true
+		}
+	}
+}
+
+func (a *App) copyPreviousMainOfficeReport(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	if claims.Role != "employee" {
+		problem(w, 403, "Копирование доступно только сотруднику")
+		return
+	}
+	var input copyPreviousMainOfficeReportInput
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Date = strings.TrimSpace(input.Date)
+	if !validDate(input.Date) || weekendDate(input.Date) {
+		problem(w, 422, "Выберите рабочий день")
+		return
+	}
+	if !a.hasReportEditAccess(r.Context(), claims.UserID, input.Date) {
+		problem(w, 409, "Доступ к редактированию отчёта закрыт")
+		return
+	}
+	previousDate, ok := priorBusinessDate(input.Date)
+	if !ok {
+		problem(w, 422, "Не удалось определить предыдущий рабочий день")
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var targetReportID string
+	err = tx.QueryRow(ctx, `SELECT id FROM main_office_reports WHERE report_date=$1 AND owner_user_id=$2 FOR UPDATE`, input.Date, claims.UserID).Scan(&targetReportID)
+	if err != nil {
+		problem(w, 409, "Сначала откройте отчёт за выбранный день")
+		return
+	}
+	var targetRows int
+	err = tx.QueryRow(ctx, `SELECT count(*) FROM main_office_report_rows rr
+		WHERE rr.report_id=$1 AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.user_id=$2
+		AND a.report_type='main_office' AND a.unit_id=rr.main_office_id::text AND a.assigned_from<=$3
+		AND (a.assigned_to IS NULL OR a.assigned_to>=$3))`, targetReportID, claims.UserID, input.Date).Scan(&targetRows)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if targetRows == 0 {
+		problem(w, 422, "На выбранный день нет назначенных компаний")
+		return
+	}
+	var firstColumnEmpty bool
+	err = tx.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM main_office_report_rows rr
+		JOIN main_office_daily_shared ds ON ds.report_date=$3 AND ds.main_office_id=rr.main_office_id
+		WHERE rr.report_id=$1 AND COALESCE(ds.open_vacancies,0)<>0
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.user_id=$2
+		AND a.report_type='main_office' AND a.unit_id=rr.main_office_id::text AND a.assigned_from<=$3
+		AND (a.assigned_to IS NULL OR a.assigned_to>=$3)))`, targetReportID, claims.UserID, input.Date).Scan(&firstColumnEmpty)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !firstColumnEmpty {
+		problem(w, 409, "Первая колонка текущего отчёта уже содержит данные")
+		return
+	}
+	var sourceHasData bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM main_office_report_rows target
+		JOIN main_office_daily_shared source ON source.report_date=$4 AND source.main_office_id=target.main_office_id
+		WHERE target.report_id=$1 AND source.open_vacancies<>0
+		AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.user_id=$2
+		AND a.report_type='main_office' AND a.unit_id=target.main_office_id::text AND a.assigned_from<=$3
+		AND (a.assigned_to IS NULL OR a.assigned_to>=$3)))`, targetReportID, claims.UserID, input.Date, previousDate).Scan(&sourceHasData)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !sourceHasData {
+		problem(w, 422, "В первой колонке за предыдущий рабочий день нет данных для копирования")
+		return
+	}
+
+	tag, err := tx.Exec(ctx, `INSERT INTO main_office_daily_shared(report_date,main_office_id,open_vacancies,updated_by_user_id,updated_by_name_snapshot)
+		SELECT $1,target.main_office_id,source.open_vacancies,u.id,
+		COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
+		FROM main_office_report_rows target
+		JOIN main_office_daily_shared source ON source.report_date=$2 AND source.main_office_id=target.main_office_id
+		JOIN users u ON u.id=$4 LEFT JOIN employees e ON e.id=u.employee_id
+		WHERE target.report_id=$3 AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.user_id=$4
+		AND a.report_type='main_office' AND a.unit_id=target.main_office_id::text AND a.assigned_from<=$1
+		AND (a.assigned_to IS NULL OR a.assigned_to>=$1))
+		ON CONFLICT(report_date,main_office_id) DO UPDATE SET open_vacancies=EXCLUDED.open_vacancies,
+		updated_by_user_id=EXCLUDED.updated_by_user_id,updated_by_name_snapshot=EXCLUDED.updated_by_name_snapshot,updated_at=now()`,
+		input.Date, previousDate, targetReportID, claims.UserID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	a.log(ctx, "main_office_report.first_column_copied_previous", "main_office_report", targetReportID)
+	a.reports.send(input.Date, map[string]any{"type": "main_office_report_updated", "date": input.Date, "field": "copied"})
+	jsonOut(w, 200, map[string]any{"ok": true, "sourceDate": previousDate, "copiedRows": tag.RowsAffected()})
 }

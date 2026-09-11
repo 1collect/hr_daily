@@ -16,9 +16,32 @@ type reportResponsibleUser struct {
 
 type reportResponsiblesInput struct {
 	Date       string   `json:"date"`
+	EndDate    string   `json:"endDate"`
+	Scope      string   `json:"scope"`
 	ReportType string   `json:"reportType"`
 	UnitID     string   `json:"unitId"`
 	UserIDs    []string `json:"userIds"`
+}
+
+func responsiblePeriod(input reportResponsiblesInput) (string, *string, bool) {
+	if !validDate(input.Date) {
+		return "", nil, false
+	}
+	switch input.Scope {
+	case "", "today":
+		end := input.Date
+		return input.Date, &end, true
+	case "period":
+		if !validDate(input.EndDate) || input.EndDate < input.Date {
+			return "", nil, false
+		}
+		end := input.EndDate
+		return input.Date, &end, true
+	case "forever":
+		return input.Date, nil, true
+	default:
+		return "", nil, false
+	}
 }
 
 func validReportUnitType(value string) bool {
@@ -36,9 +59,12 @@ func (a *App) reportResponsibles(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Не указан вид отчёта или подразделение")
 		return
 	}
-	q, err := a.db.Query(r.Context(), `SELECT u.id,e.first_name,e.last_name,e.middle_name,(r.user_id IS NOT NULL)
+	q, err := a.db.Query(r.Context(), `SELECT u.id,e.first_name,e.last_name,e.middle_name,EXISTS(
+		SELECT 1 FROM report_unit_responsibles r
+		WHERE r.user_id=u.id AND r.report_type=$2 AND r.unit_id=$3
+		  AND r.assigned_from <= $1 AND (r.assigned_to IS NULL OR r.assigned_to >= $1)
+	)
 		FROM users u JOIN employees e ON e.id=u.employee_id
-		LEFT JOIN report_unit_responsibles r ON r.user_id=u.id AND r.report_date=$1 AND r.report_type=$2 AND r.unit_id=$3
 		WHERE u.role='employee' AND u.active AND NOT u.system
 		ORDER BY e.last_name,e.first_name,e.middle_name`, date, reportType, unitID)
 	if err != nil {
@@ -74,8 +100,11 @@ func (a *App) updateReportResponsibles(w http.ResponseWriter, r *http.Request) {
 	input.ReportType = strings.TrimSpace(input.ReportType)
 	input.UnitID = strings.TrimSpace(input.UnitID)
 	input.Date = strings.TrimSpace(input.Date)
+	input.EndDate = strings.TrimSpace(input.EndDate)
+	input.Scope = strings.TrimSpace(input.Scope)
 	input.UserIDs = uniqueUserIDs(input.UserIDs)
-	if !validDate(input.Date) || !validReportUnitType(input.ReportType) || input.UnitID == "" {
+	periodFrom, periodTo, validPeriod := responsiblePeriod(input)
+	if !validPeriod || !validReportUnitType(input.ReportType) || input.UnitID == "" {
 		problem(w, 422, "Не указан вид отчёта или подразделение")
 		return
 	}
@@ -103,7 +132,23 @@ func (a *App) updateReportResponsibles(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, "Подразделение не найдено")
 		return
 	}
-	if _, err = tx.Exec(ctx, `DELETE FROM report_unit_responsibles WHERE report_date=$1 AND report_type=$2 AND unit_id=$3`, input.Date, input.ReportType, input.UnitID); err != nil {
+	// Replace only the requested window. Parts of older assignments outside it
+	// are recreated so changing a week does not erase assignments before or after it.
+	if _, err = tx.Exec(ctx, `WITH affected AS (
+		DELETE FROM report_unit_responsibles
+		WHERE report_type=$1 AND unit_id=$2
+		  AND assigned_from <= COALESCE($4::date, 'infinity'::date)
+		  AND (assigned_to IS NULL OR assigned_to >= $3::date)
+		RETURNING user_id,assigned_by_user_id,created_at,assigned_from,assigned_to
+	), preserved AS (
+		SELECT user_id,assigned_by_user_id,created_at,assigned_from,$3::date - 1 AS assigned_to
+		FROM affected WHERE assigned_from < $3::date
+		UNION ALL
+		SELECT user_id,assigned_by_user_id,created_at,$4::date + 1 AS assigned_from,assigned_to
+		FROM affected WHERE $4::date IS NOT NULL AND (assigned_to IS NULL OR assigned_to > $4::date)
+	)
+	INSERT INTO report_unit_responsibles(report_type,unit_id,user_id,assigned_by_user_id,created_at,assigned_from,assigned_to)
+	SELECT $1,$2,user_id,assigned_by_user_id,created_at,assigned_from,assigned_to FROM preserved`, input.ReportType, input.UnitID, periodFrom, periodTo); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -113,7 +158,7 @@ func (a *App) updateReportResponsibles(w http.ResponseWriter, r *http.Request) {
 			problem(w, 422, "Один из выбранных сотрудников недоступен")
 			return
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO report_unit_responsibles(report_date,report_type,unit_id,user_id,assigned_by_user_id) VALUES($1,$2,$3,$4,$5)`, input.Date, input.ReportType, input.UnitID, userID, claims.UserID); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO report_unit_responsibles(assigned_from,assigned_to,report_type,unit_id,user_id,assigned_by_user_id) VALUES($1,$2,$3,$4,$5,$6)`, periodFrom, periodTo, input.ReportType, input.UnitID, userID, claims.UserID); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -122,14 +167,14 @@ func (a *App) updateReportResponsibles(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	a.log(ctx, "report_responsibles.updated", input.ReportType, input.UnitID)
+	a.log(ctx, "report_responsibles.updated", input.ReportType, input.UnitID+":"+periodFrom)
 	jsonOut(w, 200, map[string]any{"ok": true, "count": len(input.UserIDs)})
 }
 
 func (a *App) applyResponsibleCounts(ctx context.Context, date, reportType string, rows []reportRow) error {
-	q, err := a.db.Query(ctx, `SELECT unit_id,count(*)::int FROM report_unit_responsibles r
+	q, err := a.db.Query(ctx, `SELECT unit_id,count(DISTINCT r.user_id)::int FROM report_unit_responsibles r
 		JOIN users u ON u.id=r.user_id AND u.role='employee' AND u.active AND NOT u.system
-		WHERE report_date=$1 AND report_type=$2 GROUP BY unit_id`, date, reportType)
+		WHERE assigned_from <= $1 AND (assigned_to IS NULL OR assigned_to >= $1) AND report_type=$2 GROUP BY unit_id`, date, reportType)
 	if err != nil {
 		return err
 	}
@@ -150,7 +195,7 @@ func (a *App) applyResponsibleCounts(ctx context.Context, date, reportType strin
 }
 
 func (a *App) filterAssignedRows(ctx context.Context, date, reportType, userID string, rows []reportRow) ([]reportRow, error) {
-	q, err := a.db.Query(ctx, `SELECT unit_id FROM report_unit_responsibles WHERE report_date=$1 AND report_type=$2 AND user_id=$3`, date, reportType, userID)
+	q, err := a.db.Query(ctx, `SELECT DISTINCT unit_id FROM report_unit_responsibles WHERE assigned_from <= $1 AND (assigned_to IS NULL OR assigned_to >= $1) AND report_type=$2 AND user_id=$3`, date, reportType, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +218,7 @@ func (a *App) filterAssignedRows(ctx context.Context, date, reportType, userID s
 }
 
 func (a *App) markAssignedRows(ctx context.Context, date, reportType, userID string, rows []reportRow) error {
-	q, err := a.db.Query(ctx, `SELECT unit_id FROM report_unit_responsibles WHERE report_date=$1 AND report_type=$2 AND user_id=$3`, date, reportType, userID)
+	q, err := a.db.Query(ctx, `SELECT DISTINCT unit_id FROM report_unit_responsibles WHERE assigned_from <= $1 AND (assigned_to IS NULL OR assigned_to >= $1) AND report_type=$2 AND user_id=$3`, date, reportType, userID)
 	if err != nil {
 		return err
 	}

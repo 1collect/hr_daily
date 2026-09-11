@@ -20,6 +20,7 @@ import (
 type Config struct {
 	DatabaseURL string
 	DebtsterAPI string
+	DebtsterMock bool
 	HTTPAddr    string
 	StaticDir   string
 	AppSecret   string
@@ -56,6 +57,7 @@ func Run(ctx context.Context, cfg Config) error {
 	defer db.Close()
 
 	a := &App{db: db, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a.httpClient = newDebtsterClient(cfg.DebtsterMock)
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
 	}

@@ -16,6 +16,7 @@ type correctionRowChange struct {
 	UnitName string `json:"unitName"`
 	Before rowInput `json:"before"`
 	After rowInput `json:"after"`
+ Edits []correctionCandidateEdit `json:"edits,omitempty"`
 }
 
 type correctionRequest struct {
@@ -34,7 +35,7 @@ type correctionRequest struct {
 	ReviewedAt *time.Time `json:"reviewedAt,omitempty"`
 }
 
-type requestedCorrectionRow struct { RowID string `json:"rowId"`; Values rowInput `json:"values"` }
+type requestedCorrectionRow struct { RowID string `json:"rowId"`; Values rowInput `json:"values"`; Edits []correctionCandidateEdit `json:"edits,omitempty"` }
 type createCorrectionRequestInput struct {
 	ReportDate string `json:"reportDate"`
 	ReportType string `json:"reportType"`
@@ -47,7 +48,6 @@ func validateCorrectionRequestInput(input createCorrectionRequestInput) string {
 	if msg := validatePastReportDate(strings.TrimSpace(input.ReportDate)); msg != "" { return msg }
 	if input.ReportType != "rp" && input.ReportType != "main_office" { return "Выберите тип отчёта" }
 	n := len([]rune(strings.TrimSpace(input.Note)))
-	if n < 5 { return "Опишите причину запроса минимум в 5 символах" }
 	if n > 1000 { return "Примечание не должно превышать 1000 символов" }
 	if len(input.Rows) == 0 { return "Добавьте хотя бы одно изменение" }
 	return ""
@@ -105,8 +105,9 @@ func (a *App) createCorrectionRequest(w http.ResponseWriter, r *http.Request) {
 		if snapshotErr != nil { problem(w,422,"Строка отчёта не найдена или не была назначена вам на выбранную дату"); return }
 		after := normalizeCorrectionValues(requested.Values)
 		if hasNegative(after) { problem(w,422,"Числовые значения не могут быть отрицательными"); return }
+		if !validCorrectionEdits(before,after,requested.Edits) { problem(w,422,"Список изменился. Откройте ячейку заново и повторите корректировку"); return }
 		beforeJSON,_ := json.Marshal(before); afterJSON,_ := json.Marshal(after)
-		if !bytes.Equal(beforeJSON,afterJSON) { changes = append(changes,correctionRowChange{requested.RowID,unitName,before,after}) }
+		if !bytes.Equal(beforeJSON,afterJSON) { changes = append(changes,correctionRowChange{requested.RowID,unitName,before,after,requested.Edits}) }
 	}
 	if len(changes)==0 { problem(w,422,"Измените хотя бы одно значение перед отправкой"); return }
 	changesJSON,err := json.Marshal(changes); if err != nil { serverError(w,err); return }

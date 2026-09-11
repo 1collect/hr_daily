@@ -14,7 +14,8 @@ func TestValidateCorrectionRequestInput(t *testing.T) {
 		valid bool
 	}{
 		{name: "valid", input: createCorrectionRequestInput{ReportDate: validDate, ReportType: "rp", Note: "Не успел заполнить отчёт", Rows: []requestedCorrectionRow{{RowID: "row"}}}, valid: true},
-		{name: "short note", input: createCorrectionRequestInput{ReportDate: validDate, ReportType: "rp", Note: "нет", Rows: []requestedCorrectionRow{{RowID: "row"}}}},
+		{name: "short note", input: createCorrectionRequestInput{ReportDate: validDate, ReportType: "rp", Note: "нет", Rows: []requestedCorrectionRow{{RowID: "row"}}}, valid: true},
+		{name: "empty note", input: createCorrectionRequestInput{ReportDate: validDate, ReportType: "rp", Rows: []requestedCorrectionRow{{RowID: "row"}}}, valid: true},
 		{name: "long note", input: createCorrectionRequestInput{ReportDate: validDate, ReportType: "rp", Note: strings.Repeat("а", 1001), Rows: []requestedCorrectionRow{{RowID: "row"}}}},
 		{name: "today", input: createCorrectionRequestInput{ReportDate: localToday(), ReportType: "rp", Note: "Нужно исправить отчёт", Rows: []requestedCorrectionRow{{RowID: "row"}}}},
 		{name: "missing type", input: createCorrectionRequestInput{ReportDate: validDate, Note: "Нужно исправить отчёт", Rows: []requestedCorrectionRow{{RowID: "row"}}}},

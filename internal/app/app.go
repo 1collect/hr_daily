@@ -370,6 +370,17 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if usesDebtster && !shouldSyncDebtster && a.hasReportEditAccess(ctx, claims.UserID, date) {
+		if vacanciesErr != nil {
+			serverError(w, vacanciesErr)
+			return
+		}
+		tx, beginErr := a.db.Begin(ctx)
+		if beginErr != nil { serverError(w, beginErr); return }
+		defer tx.Rollback(ctx)
+		if err = insertMissingDebtsterRows(ctx, tx, reportID, vacancies); err != nil { serverError(w, err); return }
+		if err = tx.Commit(ctx); err != nil { serverError(w, err); return }
+	}
 	rows, err := a.loadRows(ctx, reportID)
 	if err != nil {
 		serverError(w, err)

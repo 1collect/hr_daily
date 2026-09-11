@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type reportAccessUser struct {
@@ -88,6 +90,7 @@ func (a *App) openReportAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.UserIDs = uniqueUserIDs(in.UserIDs)
+	in.Date = strings.TrimSpace(in.Date)
 	if msg := validatePastReportDate(strings.TrimSpace(in.Date)); msg != "" {
 		problem(w, 422, msg)
 		return
@@ -97,6 +100,15 @@ func (a *App) openReportAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	var vacancies []debtsterVacancyReport
+	if usesDebtsterDepartments(in.Date) {
+		var fetchErr error
+		vacancies, fetchErr = fetchDebtsterVacancies(ctx, a.httpClient, a.debtsterAPI, in.Date)
+		if fetchErr != nil {
+			serverError(w, fetchErr)
+			return
+		}
+	}
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		serverError(w, err)
@@ -116,7 +128,7 @@ func (a *App) openReportAccess(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
-		_, err = tx.Exec(ctx, `UPDATE reports SET status='draft',completed_at=NULL,updated_at=now() WHERE report_date=$1 AND owner_user_id=$2`, in.Date, userID)
+		err = createAccessibleReports(ctx, tx, in.Date, userID, vacancies)
 		if err != nil {
 			serverError(w, err)
 			return
@@ -129,6 +141,52 @@ func (a *App) openReportAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	a.reports.send(in.Date, map[string]any{"type": "report_access_changed", "date": in.Date, "userIds": in.UserIDs})
 	jsonOut(w, 200, map[string]any{"ok": true, "expiresInHours": 24})
+}
+
+// Create missing reports and real row IDs before granting access. Existing data
+// and historical names are retained when access is opened again.
+func createAccessibleReports(ctx context.Context, tx pgx.Tx, date, userID string, vacancies []debtsterVacancyReport) error {
+	var reportID string
+	err := tx.QueryRow(ctx, `INSERT INTO reports(report_date,owner_user_id,owner_name_snapshot)
+		SELECT $1,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
+		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$2
+		ON CONFLICT(report_date,owner_user_id) WHERE owner_user_id IS NOT NULL
+		DO UPDATE SET status='draft',completed_at=NULL,updated_at=now() RETURNING id`, date, userID).Scan(&reportID)
+	if err != nil {
+		return err
+	}
+	if usesDebtsterDepartments(date) {
+		if err = insertMissingDebtsterRows(ctx, tx, reportID, vacancies); err != nil {
+			return err
+		}
+	} else {
+		if _, err = tx.Exec(ctx, `INSERT INTO report_rows(report_id,office_id,office_name_snapshot,office_sort_order_snapshot,debtster_department_id,debtster_department_name)
+			SELECT $1,id,name,sort_order,debtster_department_id,debtster_department_name FROM offices WHERE active ON CONFLICT DO NOTHING`, reportID); err != nil {
+			return err
+		}
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO main_office_reports(report_date,owner_user_id,owner_name_snapshot)
+		SELECT $1,u.id,COALESCE(NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),u.username)
+		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$2
+		ON CONFLICT(report_date,owner_user_id) DO UPDATE SET report_date=EXCLUDED.report_date RETURNING id`, date, userID).Scan(&reportID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO main_office_report_rows(report_id,main_office_id,main_office_name_snapshot,main_office_sort_order_snapshot)
+		SELECT $1,o.id,o.name,o.sort_order FROM main_offices o
+		WHERE o.active AND EXISTS(SELECT 1 FROM report_unit_responsibles a WHERE a.user_id=$2 AND a.report_type='main_office'
+		AND a.unit_id=o.id::text AND a.assigned_from<=$3 AND (a.assigned_to IS NULL OR a.assigned_to>=$3)) ON CONFLICT DO NOTHING`, reportID, userID, date)
+	return err
+}
+
+func insertMissingDebtsterRows(ctx context.Context, tx pgx.Tx, reportID string, vacancies []debtsterVacancyReport) error {
+	for index, department := range vacancies {
+		if _, err := tx.Exec(ctx, `INSERT INTO report_rows(report_id,debtster_department_id,debtster_department_name,office_name_snapshot,office_sort_order_snapshot)
+			VALUES($1,$2,$3,$3,$4) ON CONFLICT DO NOTHING`, reportID, department.ID, department.RP, index+1); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) closeReportAccess(w http.ResponseWriter, r *http.Request) {

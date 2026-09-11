@@ -97,6 +97,9 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
 	m.HandleFunc("POST /api/report-access", a.openReportAccess)
 	m.HandleFunc("DELETE /api/report-access", a.closeReportAccess)
+	m.HandleFunc("GET /api/correction-requests", a.correctionRequests)
+	m.HandleFunc("POST /api/correction-requests", a.createCorrectionRequest)
+	m.HandleFunc("PUT /api/correction-requests/{id}", a.reviewCorrectionRequest)
 	m.HandleFunc("GET /api/report-responsibles", a.reportResponsibles)
 	m.HandleFunc("PUT /api/report-responsibles", a.updateReportResponsibles)
 	m.HandleFunc("PUT /api/report/rows/{id}", a.updateRow)
@@ -565,7 +568,7 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 	}
 	for i := range out {
 		hr, err := a.db.Query(ctx, `SELECT full_name,position FROM hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, out[i].ID)
-		if err != nil {
+ 		if err != nil {
 			return nil, err
 		}
 		for hr.Next() {

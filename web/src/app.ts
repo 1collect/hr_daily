@@ -58,6 +58,7 @@ function pageUrl(page:string){const path=pagePaths[page]||pagePaths.report;if(!r
 let modalKeyHandler:((event:KeyboardEvent)=>void)|null=null;
 let datePickerOutsideHandler:((event:PointerEvent)=>void)|null=null,datePickerKeyHandler:((event:KeyboardEvent)=>void)|null=null;
 let currentUser:User|null=null,adminUsers:User[]=[];
+let pendingCorrectionCount=0;
 let selectedEmployee='';
 let reportSocket:WebSocket|null=null,reportRefreshTimer=0;
 const debtsterRefreshInterval=5*60*1000,debtsterRefreshRetry=30*1000;
@@ -118,6 +119,7 @@ function toast(message:string,error=false){
  toastTimer=window.setTimeout(()=>e.classList.remove('show'),duration);
 }
 function setHeader(h:string,s:string){title.textContent=h;subtitle.textContent=s}
+function resetPageFilters(){reportDate=businessToday();selectedEmployee='';adminUsers=[];closeDatePicker()}
 function drawNav(){
   const groups=[{label:'Работа с отчётами',ids:['report','main-report','trainee-reports','correction-requests','exports']},{label:'Управление',ids:['users','offices','main-offices']}];
   nav.innerHTML=groups.map(group=>{
@@ -126,12 +128,25 @@ function drawNav(){
     return `<div class="nav-group"><div class="nav-group-title">${group.label}</div>${items.map(([id,itemIcon,label])=>{
       const badge=id==='report'?'РП':id==='main-report'?'ГО':'';
       const displayLabel=badge?'Ежедневный отчёт':id==='main-offices'?'Главный офис':label;
-      return `<button type="button" class="nav-item ${id===currentPage?'active':''}" data-page="${id}"${id===currentPage?' aria-current="page"':''}><span class="nav-icon">${itemIcon}</span><span class="nav-label">${displayLabel}</span>${badge?`<span class="nav-badge">${badge}</span>`:''}</button>`;
+      const correctionBadge=id==='correction-requests'&&manager()&&pendingCorrectionCount>0?`<span class="correction-nav-badge" aria-label="Ожидают решения: ${pendingCorrectionCount}">${pendingCorrectionCount}</span>`:'';
+      return `<button type="button" class="nav-item ${id===currentPage?'active':''}" data-page="${id}"${id===currentPage?' aria-current="page"':''}><span class="nav-icon">${itemIcon}</span><span class="nav-label">${displayLabel}</span>${badge?`<span class="nav-badge">${badge}</span>`:''}${correctionBadge}</button>`;
     }).join('')}</div>`;
   }).join('');
   nav.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>{
-    currentPage=b.dataset.page!;history.pushState(null,'',pageUrl(currentPage));drawNav();nav.querySelector<HTMLButtonElement>(`[data-page="${currentPage}"]`)?.focus({preventScroll:true});route();
+    const nextPage=b.dataset.page!;if(nextPage!==currentPage)resetPageFilters();currentPage=nextPage;history.pushState(null,'',pageUrl(currentPage));drawNav();nav.querySelector<HTMLButtonElement>(`[data-page="${currentPage}"]`)?.focus({preventScroll:true});route();
   });
+}
+function setPendingCorrectionCount(count:number){
+ pendingCorrectionCount=count;
+ const item=nav.querySelector<HTMLButtonElement>('[data-page="correction-requests"]'),current=item?.querySelector<HTMLElement>('.correction-nav-badge');
+ if(!item||!manager())return;
+ if(count<=0){current?.remove();return}
+ if(current){current.textContent=String(count);current.setAttribute('aria-label',`Ожидают решения: ${count}`);return}
+ item.insertAdjacentHTML('beforeend',`<span class="correction-nav-badge" aria-label="Ожидают решения: ${count}">${count}</span>`);
+}
+async function refreshPendingCorrectionCount(){
+ if(!manager()){setPendingCorrectionCount(0);return}
+ try{const requests=await api<CorrectionRequest[]>('/api/correction-requests');setPendingCorrectionCount(requests.filter(request=>request.status==='pending').length)}catch{}
 }
 async function route(){closeDatePicker();const reportView=currentPage==='report'||currentPage==='main-report'||currentPage==='trainee-reports';if(currentPage!=='report')stopDebtsterRefresh();content.classList.toggle('report-workspace',reportView);document.body.classList.toggle('report-page',reportView);if(currentPage!=='report'&&currentPage!=='main-report'&&reportSocket){const old=reportSocket;reportSocket=null;old.close()}content.innerHTML='<div class="empty">Загрузка…</div>';try{if(currentPage==='report'||currentPage==='main-report')await loadReport();else if(currentPage==='trainee-reports')await traineeReportsPage();else if(currentPage==='correction-requests')await correctionRequestsPage();else if(currentPage==='exports')await exportPage();else if(currentPage==='users')await usersPage();else if(currentPage==='offices')await officesPage();else if(currentPage==='main-offices')await mainOfficesPage()}catch(e){content.innerHTML=`<div class="card empty">${esc((e as Error).message)}</div>`;scheduleDebtsterRefresh()}}
 
@@ -359,6 +374,7 @@ function correctionSummary(request:CorrectionRequest){const total=correctionChan
 
 async function correctionRequestsPage(){
  const requests=await api<CorrectionRequest[]>('/api/correction-requests');
+ if(manager())setPendingCorrectionCount(requests.filter(request=>request.status==='pending').length);
  if(manager())renderCorrectionAdmin(requests);else renderCorrectionEmployee(requests)
 }
 
@@ -478,9 +494,9 @@ document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')scheduleDebtsterRefresh();else stopDebtsterRefresh()});
 window.addEventListener('resize',()=>{closeDatePicker();if((currentPage==='report'||currentPage==='main-report')&&!hasCustomColumnWidths())applyColumnWidths()});
 window.addEventListener('beforeunload',e=>{if(dirtyRows.size){e.preventDefault();e.returnValue='Есть несохранённые изменения'}});
-window.addEventListener('popstate',()=>{if(!currentUser)return;const requestedPage=pageFromLocation();currentPage=pages.some(([id])=>id===requestedPage)?requestedPage:'report';reportDate=dateFromLocation();history.replaceState(null,'',pageUrl(currentPage));drawNav();route()});
+window.addEventListener('popstate',()=>{if(!currentUser)return;const requestedPage=pageFromLocation(),nextPage=pages.some(([id])=>id===requestedPage)?requestedPage:'report';if(nextPage!==currentPage)resetPageFilters();else reportDate=dateFromLocation();currentPage=nextPage;history.replaceState(null,'',pageUrl(currentPage));drawNav();route()});
 document.querySelector<HTMLButtonElement>('#logout')!.onclick=async()=>{await api('/api/auth/logout',{method:'POST',body:'{}'});stopDebtsterRefresh();currentUser=null;showLogin()};
-function configureUser(){if(!currentUser)return;const exportNav=['exports',icons.download,'Выгрузка'];pages=manager()?[...reportPage,exportNav,['users',icons.employees,'Пользователи'],['main-offices',icons.mainOffice,'ГО']]:[...reportPage,exportNav];const display=[currentUser.lastName,currentUser.firstName,currentUser.middleName].filter(Boolean).join(' ')||currentUser.username;document.querySelector('#profile-name')!.textContent=display;document.querySelector('#profile-role')!.textContent=currentUser.role==='superadmin'?'Суперадминистратор':currentUser.role==='admin'?'Администратор':'Сотрудник';document.querySelector('#profile-avatar')!.textContent=((currentUser.firstName?.[0]||'')+(currentUser.lastName?.[0]||currentUser.username[0]||'')).toUpperCase();reportDate=pageWasReloaded()?businessToday():dateFromLocation();const requestedPage=pageFromLocation();currentPage=pages.some(([id])=>id===requestedPage)?requestedPage:'report';selectedEmployee='';adminUsers=[];history.replaceState(null,'',pageUrl(currentPage));drawNav();route()}
-function showLogin(message=''){document.body.classList.add('logged-out');modalRoot.innerHTML=`<div class="login-screen"><form class="login-card" id="login-form"><div class="login-brand"><span class="brand-mark">HR</span><div><strong>HR Daily</strong></div></div><div class="login-copy"><h1>Вход в систему</h1><p>Введите логин и пароль учётной записи</p></div><div class="field"><label>Логин</label><input id="login-name" class="input" autocomplete="username" autofocus></div><div class="field"><label>Пароль</label><input id="login-password" class="input" type="password" autocomplete="current-password"></div><div id="login-error" class="login-error">${esc(message)}</div><button class="btn btn-primary login-submit" type="submit">Войти</button></form></div>`;document.querySelector<HTMLFormElement>('#login-form')!.onsubmit=async e=>{e.preventDefault();const button=document.querySelector<HTMLButtonElement>('.login-submit')!;button.disabled=true;button.textContent='Вход...';try{currentUser=await api<User>('/api/auth/login',{method:'POST',body:JSON.stringify({username:(document.querySelector('#login-name') as HTMLInputElement).value,password:(document.querySelector('#login-password') as HTMLInputElement).value})});modalRoot.innerHTML='';document.body.classList.remove('logged-out');configureUser()}catch(err){document.querySelector('#login-error')!.textContent=(err as Error).message;button.disabled=false;button.textContent='Войти'}};requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('#login-name')?.focus())}
+function configureUser(){if(!currentUser)return;const exportNav=['exports',icons.download,'Выгрузка'];pages=manager()?[...reportPage,exportNav,['users',icons.employees,'Пользователи'],['main-offices',icons.mainOffice,'ГО']]:[...reportPage,exportNav];const display=[currentUser.lastName,currentUser.firstName,currentUser.middleName].filter(Boolean).join(' ')||currentUser.username;document.querySelector('#profile-name')!.textContent=display;document.querySelector('#profile-role')!.textContent=currentUser.role==='superadmin'?'Суперадминистратор':currentUser.role==='admin'?'Администратор':'Сотрудник';document.querySelector('#profile-avatar')!.textContent=((currentUser.firstName?.[0]||'')+(currentUser.lastName?.[0]||currentUser.username[0]||'')).toUpperCase();reportDate=pageWasReloaded()?businessToday():dateFromLocation();const requestedPage=pageFromLocation();currentPage=pages.some(([id])=>id===requestedPage)?requestedPage:'report';selectedEmployee='';adminUsers=[];pendingCorrectionCount=0;history.replaceState(null,'',pageUrl(currentPage));drawNav();route();if(manager()&&currentPage!=='correction-requests')void refreshPendingCorrectionCount()}
+function showLogin(message=''){pendingCorrectionCount=0;nav.innerHTML='';document.body.classList.add('logged-out');modalRoot.innerHTML=`<div class="login-screen"><form class="login-card" id="login-form"><div class="login-brand"><span class="brand-mark">HR</span><div><strong>HR Daily</strong></div></div><div class="login-copy"><h1>Вход в систему</h1><p>Введите логин и пароль учётной записи</p></div><div class="field"><label>Логин</label><input id="login-name" class="input" autocomplete="username" autofocus></div><div class="field"><label>Пароль</label><input id="login-password" class="input" type="password" autocomplete="current-password"></div><div id="login-error" class="login-error">${esc(message)}</div><button class="btn btn-primary login-submit" type="submit">Войти</button></form></div>`;document.querySelector<HTMLFormElement>('#login-form')!.onsubmit=async e=>{e.preventDefault();const button=document.querySelector<HTMLButtonElement>('.login-submit')!;button.disabled=true;button.textContent='Вход...';try{currentUser=await api<User>('/api/auth/login',{method:'POST',body:JSON.stringify({username:(document.querySelector('#login-name') as HTMLInputElement).value,password:(document.querySelector('#login-password') as HTMLInputElement).value})});modalRoot.innerHTML='';document.body.classList.remove('logged-out');configureUser()}catch(err){document.querySelector('#login-error')!.textContent=(err as Error).message;button.disabled=false;button.textContent='Войти'}};requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('#login-name')?.focus())}
 async function init(){try{currentUser=await api<User>('/api/auth/me');document.body.classList.remove('logged-out');configureUser()}catch{showLogin()}}
 init();

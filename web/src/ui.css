@@ -194,6 +194,8 @@ body.logged-out .sidebar,body.logged-out main{display:none}.login-screen{positio
 .nav-item:focus-visible{outline-color:#e3eeff}
 .nav-badge{background:#273950;border-color:#425773;color:#b8c9df}
 .nav-item.active .nav-badge{background:#1d50c5;border-color:#6090f5;color:#fff}
+.correction-nav-badge{flex:0 0 auto;display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 5px;border:2px solid #ffb9c3;border-radius:999px;background:#dc263d;color:#fff;font-size:10px;font-weight:750;line-height:1;box-shadow:0 2px 7px rgba(220,38,61,.35)}
+.nav-item.active .correction-nav-badge{border-color:#fff;background:#c91f35;box-shadow:0 2px 7px rgba(91,8,22,.35)}
 .sidebar-foot{margin:auto 3px 0;padding-top:14px;border-top-color:#283951}
 .sidebar-profile{display:grid;grid-template-columns:32px minmax(0,1fr) 32px;align-items:center;gap:8px;width:100%;padding:12px 9px;border:1px solid #293c58;border-radius:12px;background:linear-gradient(135deg,#1b2d47,#142238)}
 .sidebar-profile #profile-avatar{display:grid;place-items:center;width:32px;height:32px;border:1px solid #46618a;border-radius:10px;background:#2a4267;color:#e2ecff;font-size:11px;font-weight:650}

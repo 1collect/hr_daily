@@ -86,9 +86,18 @@ func newTraineeNameIndex(names []string) traineeNameIndex {
 func (idx traineeNameIndex) search(name string, threshold int) []traineeMatch {
 	tokens := nameTokens(name)
 	ids := map[int]struct{}{}
-	for gram := range nameGrams(tokens) {
-		for _, id := range idx.postings[gram] {
+	// Scores up to 54 can be produced from initials or a single matching word.
+	// Such queries may have no bigrams, so the postings shortlist is not complete
+	// for a low threshold. Check every indexed name to avoid hiding valid matches.
+	if threshold <= 54 {
+		for id := range idx.names {
 			ids[id] = struct{}{}
+		}
+	} else {
+		for gram := range nameGrams(tokens) {
+			for _, id := range idx.postings[gram] {
+				ids[id] = struct{}{}
+			}
 		}
 	}
 	matches := []traineeMatch{}

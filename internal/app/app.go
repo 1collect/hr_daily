@@ -120,7 +120,7 @@ func (a *App) routes() http.Handler {
 }
 
 func (a *App) trainees(w http.ResponseWriter, r *http.Request) {
-	threshold := 55
+	threshold := 20
 	if value := r.URL.Query().Get("threshold"); value != "" {
 		var err error
 		threshold, err = strconv.Atoi(value)

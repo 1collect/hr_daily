@@ -68,6 +68,16 @@ func TestTraineeSearchPreservesNamesAndOrdersMatches(t *testing.T) {
 	}
 }
 
+func TestTraineeSearchLowThresholdDoesNotSkipInitialOnlyMatch(t *testing.T) {
+	names := []string{"Али Ерланович", "Иванов Иван"}
+	idx := newTraineeNameIndex(names)
+
+	matches := idx.search("А. Е.", 20)
+	if len(matches) != 1 || matches[0].FullName != names[0] || matches[0].Score < 20 {
+		t.Fatalf("low-score match was skipped: %+v", matches)
+	}
+}
+
 func TestTraineesRejectInvalidThreshold(t *testing.T) {
 	for _, value := range []string{"0", "101", "abc", "55.5"} {
 		w := httptest.NewRecorder()

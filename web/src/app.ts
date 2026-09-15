@@ -309,7 +309,11 @@ function reportFilterModal(){
  showModal('Фильтр и сортировка',`<div class="report-filter-settings"><div class="field"><label for="report-sort">Тип сортировки</label><select id="report-sort"><option value="default" ${filter.sort==='default'?'selected':''}>По умолчанию</option><option value="name" ${filter.sort==='name'?'selected':''}>По названию (А–Я)</option><option value="openVacancies" ${filter.sort==='openVacancies'?'selected':''}>Открытые вакансии — сначала больше</option><option value="plannedReserve" ${filter.sort==='plannedReserve'?'selected':''}>Планируемый резерв — сначала больше</option></select></div><div class="report-filter-options"><label class="report-filter-option"><input id="filter-nonzero-vacancies" type="checkbox" ${filter.nonzeroVacancies?'checked':''}><span><b>Только ненулевые открытые вакансии</b><small>Скрыть строки, где открытых вакансий нет</small></span></label><label class="report-filter-option"><input id="filter-nonzero-reserve" type="checkbox" ${filter.nonzeroReserve?'checked':''}><span><b>Только ненулевой планируемый резерв</b><small>Скрыть строки, где резерв не запланирован</small></span></label></div></div>`,()=>{
   reportFilters[scope]={sort:modalRoot.querySelector<HTMLSelectElement>('#report-sort')!.value as ReportSort,nonzeroVacancies:modalRoot.querySelector<HTMLInputElement>('#filter-nonzero-vacancies')!.checked,nonzeroReserve:modalRoot.querySelector<HTMLInputElement>('#filter-nonzero-reserve')!.checked};
   localStorage.setItem(reportFiltersKey,JSON.stringify(reportFilters));closeModal();renderReport();toast('Фильтр применён');
- },()=>{modalRoot.querySelector<HTMLButtonElement>('.save')!.textContent='Применить'});
+ },()=>{
+  const cancel=modalRoot.querySelector<HTMLButtonElement>('.cancel')!;cancel.insertAdjacentHTML('beforebegin','<button class="btn btn-outline report-filter-reset" type="button">Сбросить</button>');
+  modalRoot.querySelector<HTMLButtonElement>('.report-filter-reset')!.onclick=()=>{reportFilters[scope]=defaultReportFilter();localStorage.setItem(reportFiltersKey,JSON.stringify(reportFilters));closeModal();renderReport();toast('Фильтр сброшен')};
+  modalRoot.querySelector<HTMLButtonElement>('.save')!.textContent='Применить';
+ });
 }
 
 function columnSettingsModal(){

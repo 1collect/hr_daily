@@ -13,14 +13,15 @@ type traineeMatch struct {
 	Score    int    `json:"score"`
 }
 
-// Read the actual candidate lists, excluding dismissed workers and future reports.
+// Read the actual candidate lists from the selected day and the preceding 29 days,
+// excluding dismissed workers and reports outside this rolling 30-day window.
 // Keep original names for display; normalization belongs only to the search index.
 func (a *App) loadTraineeSearchNames(ctx context.Context, date string) ([]string, error) {
 	rows, err := a.db.Query(ctx, `SELECT DISTINCT p.full_name
 		FROM report_row_people p
 		JOIN report_rows rr ON rr.id=p.report_row_id
 		JOIN reports r ON r.id=rr.report_id
-		WHERE r.report_date <= $1 AND p.category IN
+		WHERE r.report_date BETWEEN $1::date - 29 AND $1::date AND p.category IN
 		('invited_candidates','interviewed_candidates','interns','reserve_candidates')
 		ORDER BY p.full_name`, date)
 	if err != nil {

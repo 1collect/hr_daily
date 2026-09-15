@@ -286,16 +286,12 @@ function resetColumnWidths(){columnWidths={};localStorage.removeItem('hr-column-
 function columnSettingsModal(){
  const scope=reportColumnScope(),columns=availableReportColumns(),hidden=new Set(hiddenReportColumns[scope]);
  const options=columns.map(([id,label])=>`<label class="column-visibility-option ${id==='office'?'is-required':''}"><input type="checkbox" value="${id}" ${id==='office'||!hidden.has(id)?'checked':''} ${id==='office'?'disabled':''}><span><b>${esc(isMainReport()&&id==='office'?'Компания':label)}</b>${id==='office'?'<small>Основная колонка всегда отображается</small>':''}</span></label>`).join('');
- showModal('Настройка колонок',`<div class="column-settings"><div class="column-settings-head"><div><b>Отображаемые колонки</b><span>Оставшиеся колонки автоматически займут всю ширину таблицы</span></div><button class="access-select-all column-select-all" type="button"></button></div><div class="column-visibility-list">${options}</div></div>`,()=>{
+ showModal('Настройка колонок',`<div class="column-settings"><div class="column-settings-head"><b>Отображаемые колонки</b></div><div class="column-visibility-list">${options}</div></div>`,()=>{
   const visible=new Set([...modalRoot.querySelectorAll<HTMLInputElement>('.column-visibility-option input:checked')].map(input=>input.value));
   hiddenReportColumns[scope]=columns.map(([id])=>id).filter(id=>id!=='office'&&!visible.has(id));
   localStorage.setItem(hiddenColumnsKey,JSON.stringify(hiddenReportColumns));
   columnWidths={};localStorage.removeItem('hr-column-widths-v2');
   closeModal();renderReport();toast('Набор колонок сохранён');
- },()=>{
-  const inputs=[...modalRoot.querySelectorAll<HTMLInputElement>('.column-visibility-option input:not(:disabled)')],toggle=modalRoot.querySelector<HTMLButtonElement>('.column-select-all')!;
-  const update=()=>{toggle.textContent=inputs.every(input=>input.checked)?'Оставить только основную':'Выбрать все'};
-  inputs.forEach(input=>input.onchange=update);toggle.onclick=()=>{const checked=!inputs.every(input=>input.checked);inputs.forEach(input=>input.checked=checked);update()};update();
  });
 }
 

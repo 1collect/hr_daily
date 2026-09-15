@@ -310,7 +310,7 @@ function reportFilterModal(){
   reportFilters[scope]={sort:modalRoot.querySelector<HTMLSelectElement>('#report-sort')!.value as ReportSort,nonzeroVacancies:modalRoot.querySelector<HTMLInputElement>('#filter-nonzero-vacancies')!.checked,nonzeroReserve:modalRoot.querySelector<HTMLInputElement>('#filter-nonzero-reserve')!.checked};
   localStorage.setItem(reportFiltersKey,JSON.stringify(reportFilters));closeModal();renderReport();toast('Фильтр применён');
  },()=>{
-  const cancel=modalRoot.querySelector<HTMLButtonElement>('.cancel')!;cancel.insertAdjacentHTML('beforebegin','<button class="btn btn-outline report-filter-reset" type="button">Сбросить</button>');
+  const cancel=modalRoot.querySelector<HTMLButtonElement>('.cancel')!;cancel.insertAdjacentHTML('afterend','<button class="btn btn-danger report-filter-reset" type="button">Сбросить</button>');
   modalRoot.querySelector<HTMLButtonElement>('.report-filter-reset')!.onclick=()=>{reportFilters[scope]=defaultReportFilter();localStorage.setItem(reportFiltersKey,JSON.stringify(reportFilters));closeModal();renderReport();toast('Фильтр сброшен')};
   modalRoot.querySelector<HTMLButtonElement>('.save')!.textContent='Применить';
  });
@@ -319,12 +319,15 @@ function reportFilterModal(){
 function columnSettingsModal(){
  const scope=reportColumnScope(),columns=availableReportColumns(),hidden=new Set(hiddenReportColumns[scope]);
  const options=columns.map(([id,label])=>`<label class="column-visibility-option ${id==='office'?'is-required':''}"><input type="checkbox" value="${id}" ${id==='office'||!hidden.has(id)?'checked':''} ${id==='office'?'disabled':''}><span><b>${esc(isMainReport()&&id==='office'?'Компания':label)}</b>${id==='office'?'<small>Основная колонка всегда отображается</small>':''}</span></label>`).join('');
- showModal('Настройка колонок',`<div class="column-settings"><div class="column-settings-head"><b>Отображаемые колонки</b></div><div class="column-visibility-list">${options}</div></div>`,()=>{
+ showModal('Настройка колонок',`<div class="column-settings"><div class="column-settings-head"><b>Отображаемые колонки</b><button class="access-select-all column-select-all" type="button" hidden>Выбрать все</button></div><div class="column-visibility-list">${options}</div></div>`,()=>{
   const visible=new Set([...modalRoot.querySelectorAll<HTMLInputElement>('.column-visibility-option input:checked')].map(input=>input.value));
   hiddenReportColumns[scope]=columns.map(([id])=>id).filter(id=>id!=='office'&&!visible.has(id));
   localStorage.setItem(hiddenColumnsKey,JSON.stringify(hiddenReportColumns));
   columnWidths={};localStorage.removeItem('hr-column-widths-v2');
   closeModal();renderReport();toast('Набор колонок сохранён');
+ },()=>{
+  const inputs=[...modalRoot.querySelectorAll<HTMLInputElement>('.column-visibility-option input:not(:disabled)')],selectAll=modalRoot.querySelector<HTMLButtonElement>('.column-select-all')!,update=()=>{selectAll.hidden=inputs.every(input=>input.checked)};
+  inputs.forEach(input=>input.onchange=update);selectAll.onclick=()=>{inputs.forEach(input=>input.checked=true);update()};update();
  });
 }
 

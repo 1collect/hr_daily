@@ -178,6 +178,22 @@ function traineeSearchResults(row:TraineeReport){
  if(!row.matches.length)return '<td class="trainee-search-result-cell">Не найдено</td>';
  return `<td class="trainee-search-result-cell"><ul class="trainee-matches" aria-label="Возможные совпадения в нашей базе">${row.matches.map(match=>`<li><span>${esc(match.full_name)}</span><small aria-label="Сходство ФИО: ${esc(match.score)}%">${esc(match.score)}%</small></li>`).join('')}</ul></td>`;
 }
+function traineeNameCell(row:TraineeReport,index:number){
+ const unmatched=Array.isArray(row.matches)&&row.matches.length===0;
+ return `<td class="primary-trainee-cell">${unmatched?`<button class="trainee-name-button" type="button" data-trainee-index="${index}" title="Показать совпадения ниже 55%">${esc(row.full_name)}</button>`:esc(row.full_name)}</td>`;
+}
+async function traineeLowMatchesModal(row:TraineeReport,button:HTMLButtonElement){
+ const date=reportDate;
+ button.disabled=true;button.classList.add('is-loading');
+ try{
+  const rows=await api<TraineeReport[]>(`/api/trainees?report_date=${encodeURIComponent(date)}&threshold=1`);
+  if(currentPage!=='trainee-reports'||reportDate!==date)return;
+  const detailed=rows.find(candidate=>candidate.trainee_id!==null&&candidate.trainee_id===row.trainee_id)||rows.find(candidate=>candidate.department===row.department&&candidate.full_name===row.full_name&&candidate.reporter_id===row.reporter_id);
+  const matches=(detailed?.matches||[]).filter(match=>match.score<55);
+  const results=matches.length?`<ul class="trainee-modal-matches">${matches.map(match=>`<li><span>${esc(match.full_name)}</span><b>${esc(match.score)}%</b></li>`).join('')}</ul>`:'<div class="trainee-modal-empty">Совпадений даже с низким процентом не найдено.</div>';
+  showInfoModal('Слабые совпадения',`<div class="trainee-match-detail"><div class="trainee-match-person"><small>Стажёр</small><b>${esc(row.full_name)}</b><span>${esc(row.department)} · поиск за последние 30 дней</span></div><p>Варианты ниже основного порога 55%:</p>${results}</div>`);
+ }catch(error){toast((error as Error).message,true)}finally{button.disabled=false;button.classList.remove('is-loading')}
+}
 async function traineeReportsPage(){
  setHeader('Отчеты по стажерам','Актуальные данные по стажерам подразделений');
  const rows=await api<TraineeReport[]>(`/api/trainees?report_date=${encodeURIComponent(reportDate)}`);
@@ -186,9 +202,10 @@ async function traineeReportsPage(){
  const okUnmatched=rows.filter(row=>traineeRowClass(row)==='trainee-ok-unmatched').length;
  const cell=(value:unknown,className='',tooltip='')=>`<td class="${className}" ${tooltip?`data-tooltip="${esc(tooltip)}"`:''}>${value===null||value===undefined||value===''?'—':esc(value)}</td>`;
  content.innerHTML=`<div class="toolbar trainee-toolbar"><div class="date-switcher"><button class="btn icon-btn" id="prev-day" aria-label="Предыдущий рабочий день">${icons.left}</button><button class="report-date-button" id="report-date" type="button" aria-haspopup="dialog" aria-label="Выбрать дату отчёта"><span>${displayDate(reportDate)}</span>${icons.calendar}</button><button class="btn icon-btn" id="next-day" aria-label="Следующий рабочий день">${icons.right}</button></div><span class="trainee-count">Стажеров: <b>${rows.length}</b></span><div class="spacer"></div><div class="trainee-summary" aria-label="Сводка поиска"><span class="trainee-summary-item matched">С совпадениями <b>${matched}</b></span><span class="trainee-summary-item attention" title="Источник ДИР, найдены возможные совпадения в нашей базе">ДИР · есть совпадения <b>${directorMatches}</b></span><span class="trainee-summary-item missing" title="Источник ОК, в нашей базе совпадения не найдены">ОК · не найдено <b>${okUnmatched}</b></span></div></div>
- <div class="sheet-wrap trainee-sheet-wrap"><table class="sheet trainee-sheet"><colgroup><col class="trainee-number"><col class="trainee-department"><col class="trainee-name"><col class="trainee-source"><col class="trainee-date"><col class="trainee-search-result"></colgroup><thead><tr><th>№</th><th>РП</th><th>Стажер</th><th>Источник</th><th>Дата собеседования</th><th>Результат поиска<small class="trainee-search-hint">Возможные совпадения · сходство ФИО</small></th></tr></thead><tbody>${rows.length?rows.map((row,index)=>`<tr class="${traineeRowClass(row)}">${cell(index+1,'trainee-number-cell')}${cell(row.department,'primary-trainee-cell',row.department)}${cell(row.full_name,'primary-trainee-cell',row.full_name)}${cell(row.source)}${cell(traineeDate(row.interview_date))}${traineeSearchResults(row)}</tr>`).join(''):`<tr><td class="trainee-table-empty" colspan="6">За ${displayDate(reportDate)} данных по стажерам нет</td></tr>`}</tbody></table></div>`;
+ <div class="sheet-wrap trainee-sheet-wrap"><table class="sheet trainee-sheet"><colgroup><col class="trainee-number"><col class="trainee-department"><col class="trainee-name"><col class="trainee-source"><col class="trainee-date"><col class="trainee-search-result"></colgroup><thead><tr><th>№</th><th>РП</th><th>Стажер</th><th>Источник</th><th>Дата собеседования</th><th>Результат поиска<small class="trainee-search-hint">Возможные совпадения · сходство ФИО</small></th></tr></thead><tbody>${rows.length?rows.map((row,index)=>`<tr class="${traineeRowClass(row)}">${cell(index+1,'trainee-number-cell')}${cell(row.department,'primary-trainee-cell',row.department)}${traineeNameCell(row,index)}${cell(row.source)}${cell(traineeDate(row.interview_date))}${traineeSearchResults(row)}</tr>`).join(''):`<tr><td class="trainee-table-empty" colspan="6">За ${displayDate(reportDate)} данных по стажерам нет</td></tr>`}</tbody></table></div>`;
  const dateButton=content.querySelector<HTMLButtonElement>('#report-date')!;dateButton.onclick=()=>openDatePicker(dateButton);
  content.querySelector<HTMLButtonElement>('#prev-day')!.onclick=()=>shiftDate(-1);content.querySelector<HTMLButtonElement>('#next-day')!.onclick=()=>shiftDate(1);
+ content.querySelectorAll<HTMLButtonElement>('.trainee-name-button').forEach(button=>button.onclick=()=>traineeLowMatchesModal(rows[Number(button.dataset.traineeIndex)],button));
  wireSheetHighlighting();restoreScroll()
 }
 function reportEmployeeOptions(){const option=(u:User)=>`<option value="${u.id}" ${u.id===selectedEmployee?'selected':''}>${esc([u.lastName,u.firstName,u.middleName].filter(Boolean).join(' '))}</option>`;return `<option value="">Все сотрудники</option>${adminUsers.map(option).join('')}`}

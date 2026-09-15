@@ -39,12 +39,12 @@ func (a *App) createMainOffice(w http.ResponseWriter, r *http.Request) {
 	}
 	item.Name = strings.TrimSpace(item.Name)
 	if item.Name == "" {
-		problem(w, 422, "Название компании обязательно")
+		problem(w, 422, "Название позиции обязательно")
 		return
 	}
 	err := a.db.QueryRow(r.Context(), `INSERT INTO main_offices(name,sort_order) VALUES($1,COALESCE((SELECT max(sort_order)+1 FROM main_offices),1)) RETURNING id,sort_order`, item.Name).Scan(&item.ID, &item.SortOrder)
 	if err != nil {
-		problem(w, 409, "Такая компания уже существует")
+		problem(w, 409, "Такая позиция уже существует")
 		return
 	}
 	item.Active = true
@@ -62,12 +62,12 @@ func (a *App) updateMainOffice(w http.ResponseWriter, r *http.Request) {
 	}
 	item.Name = strings.TrimSpace(item.Name)
 	if item.Name == "" {
-		problem(w, 422, "Название компании обязательно")
+		problem(w, 422, "Название позиции обязательно")
 		return
 	}
 	tag, err := a.db.Exec(r.Context(), `UPDATE main_offices SET name=$2,active=$3,updated_at=now() WHERE id=$1`, r.PathValue("id"), item.Name, item.Active)
 	if err != nil || tag.RowsAffected() == 0 {
-		problem(w, 422, "Не удалось обновить компанию")
+		problem(w, 422, "Не удалось обновить позицию")
 		return
 	}
 	a.log(r.Context(), "main_office.updated", "main_office", r.PathValue("id"))
@@ -94,7 +94,7 @@ func (a *App) reorderMainOffices(w http.ResponseWriter, r *http.Request) {
 		seen[id] = struct{}{}
 	}
 	if len(input.IDs) != total || len(seen) != total {
-		problem(w, 422, "Передан неполный порядок компаний")
+		problem(w, 422, "Передан неполный порядок позиций")
 		return
 	}
 	tx, err := a.db.Begin(r.Context())
@@ -106,7 +106,7 @@ func (a *App) reorderMainOffices(w http.ResponseWriter, r *http.Request) {
 	for index, id := range input.IDs {
 		tag, updateErr := tx.Exec(r.Context(), `UPDATE main_offices SET sort_order=$2,updated_at=now() WHERE id=$1`, id, index+1)
 		if updateErr != nil || tag.RowsAffected() != 1 {
-			problem(w, 422, "Не удалось сохранить порядок компаний")
+			problem(w, 422, "Не удалось сохранить порядок позиций")
 			return
 		}
 	}

@@ -45,13 +45,15 @@ docker compose up -d
 Откройте <http://localhost:6770> и войдите под суперадминистратором из `.env`. Сразу после первого входа смените тестовые значения паролей для production-окружения.
 
 Переменные подключения и запуска обязательны. `DEBTSTER_MOCK` необязателен
-(по умолчанию `false`); `DEBTSTER_API` обязателен только при выключенной имитации.
+(по умолчанию `false`); `DEBTSTER_API` и `DEBSTER_KEY` обязательны только при
+выключенной имитации.
 
 | Переменная | Назначение |
 |---|---|
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | PostgreSQL |
 | `DATABASE_URL` | Строка подключения с host `postgres` |
 | `DEBTSTER_API` | Базовый URL Debtster API без пути `/api/v1/...` |
+| `DEBSTER_KEY` | Ключ Debtster API, передаваемый в заголовке `X-API-Key` |
 | `DEBTSTER_MOCK` | `true` — встроенная имитация Debtster; `false` — реальный API |
 | `HTTP_ADDR` | Внутренний адрес Go-сервера |
 | `STATIC_DIR` | Каталог frontend |
@@ -60,6 +62,47 @@ docker compose up -d
 | `SUPERADMIN_PASSWORD` | Начальный пароль суперадминистратора |
 | `APP_PORT` | Входной порт, в примере `6770` |
 | `DOCKER_NETWORK` | Обязательное имя существующей внешней Docker-сети |
+
+### Авторизация в Debtster API
+
+Все запросы отправляются с заголовками:
+
+```yaml
+X-API-Key: ваш_ключ
+Accept: application/json
+```
+
+Ключ задаётся в `.env`:
+
+```dotenv
+DEBSTER_KEY=ваш_ключ
+```
+
+Пример получения отчёта по стажёрам:
+
+```bash
+curl -G "$DEBTSTER_API/api/v1/report/trainees" \
+  -H "X-API-Key: $DEBSTER_KEY" \
+  -H "Accept: application/json" \
+  --data-urlencode "report_date=2026-09-17"
+```
+
+Пример получения отчёта по вакансиям:
+
+```bash
+curl -G "$DEBTSTER_API/api/v1/report/vacancies" \
+  -H "X-API-Key: $DEBSTER_KEY" \
+  -H "Accept: application/json" \
+  --data-urlencode "report_date=2026-09-17"
+```
+
+Пример получения списка отделов:
+
+```bash
+curl "$DEBTSTER_API/api/v1/list/departments/hr-report-submitters" \
+  -H "X-API-Key: $DEBSTER_KEY" \
+  -H "Accept: application/json"
+```
 
 ## Проверки
 
@@ -90,7 +133,7 @@ PostgreSQL, миграции и учётные записи по-прежнем�
 синхронизация сохраняет тестовые РП и снимки показателей в подключённую базу.
 
 Для возврата к реальному API установите `DEBTSTER_MOCK=false`, укажите
-`DEBTSTER_API` и выполните `docker compose up -d backend`.
+`DEBTSTER_API`, `DEBSTER_KEY` и выполните `docker compose up -d backend`.
 Ранее сохранённые тестовые данные останутся в тестовой БД.
 При запуске Go напрямую `.env` автоматически не читается — переменные нужно
 передать процессу; Docker Compose читает `.env` самостоятельно.

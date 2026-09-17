@@ -8,7 +8,7 @@ import (
 
 func TestDebtsterMockResponses(t *testing.T) {
 	ctx := context.Background()
-	client := newDebtsterClient(true)
+	client := newDebtsterClient("", true)
 	const base = "https://debtster.invalid"
 	departments, err := fetchDebtsterDepartments(ctx, client, base)
 	if err != nil || len(departments) != 3 {
@@ -43,15 +43,17 @@ func TestDebtsterMockResponses(t *testing.T) {
 	if _, err = client.Get(base + "/unknown"); err == nil {
 		t.Fatal("unknown endpoints must fail without network fallback")
 	}
-	count, vacancyCount, err := CheckDebtsterAPI(ctx, base, true)
+	count, vacancyCount, err := CheckDebtsterAPI(ctx, base, "", true)
 	if err != nil || count != 3 || vacancyCount != 3 {
 		t.Fatalf("check: %d %d %v", count, vacancyCount, err)
 	}
 }
 
 func TestDebtsterClientDefaultsToRealHTTP(t *testing.T) {
-	if client := newDebtsterClient(false); client.Transport != nil {
-		t.Fatal("real mode must use default HTTP transport")
+	client := newDebtsterClient("test-key", false)
+	transport, ok := client.Transport.(debtsterAuthTransport)
+	if !ok || transport.key != "test-key" || transport.base != http.DefaultTransport {
+		t.Fatalf("real mode has unexpected transport: %#v", client.Transport)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

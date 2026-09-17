@@ -69,6 +69,9 @@ func TestShouldSyncDebtsterDepartmentsOnlyForCurrentDate(t *testing.T) {
 
 func TestCheckDebtsterAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "test-debtster-key" || r.Header.Get("Accept") != "application/json" {
+			t.Fatalf("unexpected authentication headers: X-API-Key=%q Accept=%q", r.Header.Get("X-API-Key"), r.Header.Get("Accept"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == debtsterVacanciesPath {
 			_, _ = w.Write([]byte(`{"error_code":0,"status":"success","data":[{"id":12,"rp":"РП Алматы"}]}`))
@@ -78,7 +81,7 @@ func TestCheckDebtsterAPI(t *testing.T) {
 	}))
 	defer server.Close()
 
-	departments, vacancies, err := CheckDebtsterAPI(context.Background(), server.URL)
+	departments, vacancies, err := CheckDebtsterAPI(context.Background(), server.URL, "test-debtster-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +224,7 @@ func TestCheckDebtsterAPIStillChecksVacanciesWhenDepartmentsFail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, _, err := CheckDebtsterAPI(context.Background(), server.URL)
+	_, _, err := CheckDebtsterAPI(context.Background(), server.URL, "test-debtster-key")
 	if err == nil || !vacanciesCalled || !strings.Contains(err.Error(), "vacancies: ok") {
 		t.Fatalf("unexpected result: called=%v err=%v", vacanciesCalled, err)
 	}

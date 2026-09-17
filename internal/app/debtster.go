@@ -30,8 +30,8 @@ func shouldSyncDebtsterDepartments(date, today string) bool {
 
 // CheckDebtsterAPI verifies that the configured Debtster endpoint is reachable
 // and returns a valid department list without changing application data.
-func CheckDebtsterAPI(ctx context.Context, baseURL string, mock ...bool) (int, int, error) {
-	client := newDebtsterClient(len(mock) > 0 && mock[0])
+func CheckDebtsterAPI(ctx context.Context, baseURL, key string, mock ...bool) (int, int, error) {
+	client := newDebtsterClient(key, len(mock) > 0 && mock[0])
 	departments, departmentsErr := fetchDebtsterDepartments(ctx, client, baseURL)
 	vacancies, vacanciesErr := fetchDebtsterVacancies(ctx, client, baseURL, localToday())
 	if departmentsErr != nil || vacanciesErr != nil {

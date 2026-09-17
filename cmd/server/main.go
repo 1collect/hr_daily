@@ -33,7 +33,7 @@ func main() {
 			return
 		case "check-debtster":
 			mock := debtsterMock()
-			departments, vacancies, err := app.CheckDebtsterAPI(ctx, debtsterURL(mock), mock)
+			departments, vacancies, err := app.CheckDebtsterAPI(ctx, debtsterURL(mock), debtsterKey(mock), mock)
 			if err != nil {
 				log.Fatalf("Debtster API check failed: %v", err)
 			}
@@ -49,6 +49,7 @@ func main() {
 	cfg := app.Config{
 		DatabaseURL:  require("DATABASE_URL"),
 		DebtsterAPI:  debtsterURL(mock),
+		DebtsterKey:  debtsterKey(mock),
 		DebtsterMock: mock,
 		HTTPAddr:     require("HTTP_ADDR"),
 		StaticDir:    require("STATIC_DIR"),
@@ -81,6 +82,13 @@ func debtsterURL(mock bool) string {
 		return "https://debtster.mock"
 	}
 	return require("DEBTSTER_API")
+}
+
+func debtsterKey(mock bool) string {
+	if mock {
+		return ""
+	}
+	return require("DEBSTER_KEY")
 }
 
 func require(name string) string {

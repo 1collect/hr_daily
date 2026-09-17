@@ -10,12 +10,27 @@ import (
 	"time"
 )
 
-func newDebtsterClient(mock bool) *http.Client {
-	client := &http.Client{Timeout: 10 * time.Second}
+func newDebtsterClient(key string, mock bool) *http.Client {
+	transport := http.RoundTripper(http.DefaultTransport)
 	if mock {
-		client.Transport = debtsterMockTransport{}
+		transport = debtsterMockTransport{}
 	}
-	return client
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: debtsterAuthTransport{key: key, base: transport},
+	}
+}
+
+type debtsterAuthTransport struct {
+	key  string
+	base http.RoundTripper
+}
+
+func (t debtsterAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	authenticated := req.Clone(req.Context())
+	authenticated.Header.Set("X-API-Key", t.key)
+	authenticated.Header.Set("Accept", "application/json")
+	return t.base.RoundTrip(authenticated)
 }
 
 // debtsterMockTransport exercises the normal JSON decoders without network access.

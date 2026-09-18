@@ -69,13 +69,14 @@ func (a *App) traineeCorrectionDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := a.db.Query(r.Context(), `
-		SELECT p.full_name, p.category, r.report_date::text, o.name,
+		SELECT p.full_name, p.category, r.report_date::text,
+		       COALESCE(o.name, rr.office_name_snapshot, rr.debtster_department_name, 'Не указан'),
 		       COALESCE(string_agg(DISTINCT NULLIF(trim(concat_ws(' ', e.last_name, e.first_name, e.middle_name)), ''), ', '), ''),
 		       min(p.created_at), rr.id::text
 		FROM report_row_people p
 		JOIN report_rows rr ON rr.id = p.report_row_id
 		JOIN reports r ON r.id = rr.report_id
-		JOIN offices o ON o.id = rr.office_id
+		LEFT JOIN offices o ON o.id = rr.office_id
 		LEFT JOIN report_unit_responsibles rur
 		  ON rur.report_type = 'rp'
 		 AND rur.unit_id = COALESCE(rr.debtster_department_id::text, rr.office_id::text)
@@ -85,7 +86,8 @@ func (a *App) traineeCorrectionDetails(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN employees e ON e.id = u.employee_id
 		WHERE r.report_date BETWEEN $2::date - 29 AND $2::date
 		  AND lower(trim(p.full_name)) = lower(trim($1))
-		GROUP BY p.full_name, p.category, r.report_date, o.name, rr.id
+		GROUP BY p.full_name, p.category, r.report_date,
+		         COALESCE(o.name, rr.office_name_snapshot, rr.debtster_department_name, 'Не указан'), rr.id
 		ORDER BY r.report_date DESC, min(p.created_at) DESC`, name, date)
 	if err != nil {
 		serverError(w, err)

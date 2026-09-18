@@ -7,14 +7,21 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 
 	"hrreport/internal/app"
 	"hrreport/migrations"
+	rediscache "hrreport/pkg/cache/redis"
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Print("no .env file found, using system env or defaults")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -56,6 +63,15 @@ func main() {
 		AppSecret:    require("APP_SECRET"),
 		SuperLogin:   require("SUPERADMIN_LOGIN"),
 		SuperPass:    require("SUPERADMIN_PASSWORD"),
+		RedisPrefix:  getenv("REDIS_PREFIX", "debtster_database"),
+		Redis: rediscache.ConnectionInfo{
+			Addr:        getenv("REDIS_ADDR", "127.0.0.1:6379"),
+			Password:    getenv("REDIS_PASSWORD", "hello-world"),
+			DB:          requireInt("REDIS_DB", 0),
+			MaxRetries:  requireInt("REDIS_MAX_RETRIES", 5),
+			DialTimeout: time.Duration(requireInt("REDIS_DIAL_TIMEOUT", 10)) * time.Second,
+			Timeout:     time.Duration(requireInt("REDIS_TIMEOUT", 5)) * time.Second,
+		},
 	}
 	if err := app.Run(ctx, cfg); err != nil {
 		log.Fatal(err)
@@ -97,4 +113,23 @@ func require(name string) string {
 		log.Fatalf("required environment variable %s is not set", name)
 	}
 	return v
+}
+
+func getenv(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func requireInt(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Fatalf("invalid int value %q for %s: %v", value, name, err)
+	}
+	return parsed
 }

@@ -16,6 +16,8 @@ services:
 
   backend:
     build: .
+    env_file:
+      - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DEBTSTER_API: ${DEBTSTER_API:-}

@@ -15,8 +15,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	rediscache "hrreport/pkg/cache/redis"
 )
 
 type Config struct {
@@ -29,15 +27,11 @@ type Config struct {
 	AppSecret              string
 	SuperLogin             string
 	SuperPass              string
-	RedisPrefix            string
-	Redis                  rediscache.ConnectionInfo
 	DebtsterIntegrationKey string
 }
 
 type App struct {
 	db                     *pgxpool.Pool
-	redis                  *rediscache.Client
-	redisPrefix            string
 	debtsterIntegrationKey string
 	debtsterAPI            string
 	httpClient             *http.Client
@@ -65,13 +59,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer db.Close()
 
-	redisClient, err := rediscache.NewRedisConnection(cfg.Redis)
-	if err != nil {
-		return fmt.Errorf("redis init: %w", err)
-	}
-	defer rediscache.Close(redisClient)
-
-	a := &App{db: db, redis: redisClient, redisPrefix: cfg.RedisPrefix, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
 	a.httpClient = newDebtsterClient(cfg.DebtsterKey, cfg.DebtsterMock)
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)

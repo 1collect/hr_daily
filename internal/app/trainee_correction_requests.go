@@ -78,12 +78,7 @@ func (a *App) traineeCorrectionDetails(w http.ResponseWriter, r *http.Request) {
 		JOIN report_rows rr ON rr.id = p.report_row_id
 		JOIN reports r ON r.id = rr.report_id
 		LEFT JOIN offices o ON o.id = rr.office_id
-		LEFT JOIN report_unit_responsibles rur
-		  ON rur.report_type = 'rp'
-		 AND rur.unit_id = COALESCE(rr.debtster_department_id::text, rr.office_id::text)
-		 AND rur.assigned_from <= r.report_date
-		 AND (rur.assigned_to IS NULL OR rur.assigned_to >= r.report_date)
-		LEFT JOIN users u ON u.id = rur.user_id
+		LEFT JOIN users u ON u.id = r.owner_user_id
 		LEFT JOIN employees e ON e.id = u.employee_id
 		WHERE r.report_date BETWEEN $2::date - 29 AND $2::date
 		  AND lower(trim(p.full_name)) = lower(trim($1))

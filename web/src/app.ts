@@ -494,13 +494,16 @@ function addCorrectionRequestTabs(traineeRequests:TraineeCorrectionRequest[]){
  head.querySelectorAll<HTMLButtonElement>('[data-request-view]').forEach(button=>button.onclick=()=>{
   head.querySelectorAll('[data-request-view]').forEach(item=>item.classList.toggle('is-active',item===button));
   const adminCard=content.querySelector<HTMLElement>('.correction-admin-card');
+  const stats=content.querySelector<HTMLElement>('.correction-admin-head .correction-stats');
   if(button.dataset.requestView==='trainee'){
    if(adminCard)adminCard.hidden=true;
+   if(stats)stats.hidden=true;
    let panel=content.querySelector<HTMLElement>('.trainee-request-panel');
    if(!panel){panel=document.createElement('section');panel.className='card admin-card trainee-request-panel';content.append(panel)}
    panel.hidden=false;renderTraineeAdminRequests(panel,traineeRequests);
   }else{
    if(adminCard)adminCard.hidden=false;
+   if(stats)stats.hidden=false;
    const panel=content.querySelector<HTMLElement>('.trainee-request-panel');if(panel)panel.hidden=true;
   }
  });

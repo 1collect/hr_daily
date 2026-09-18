@@ -128,7 +128,7 @@ func (a *App) parseSession(token string) (sessionClaims, error) {
 
 func (a *App) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" || r.URL.Path == "/api/auth/login" || (!strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/ws/")) {
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/auth/login" || strings.HasPrefix(r.URL.Path, "/api/integrations/debtster/") || (!strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/ws/")) {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -65,6 +65,7 @@ docker compose up -d
 | `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB` | Подключение к Redis; при запуске доступность проверяется командой `PING` |
 | `REDIS_MAX_RETRIES`, `REDIS_DIAL_TIMEOUT`, `REDIS_TIMEOUT` | Повторы и таймауты Redis в секундах |
 | `REDIS_PREFIX` | Префикс ключей Redis (`debtster_database` по умолчанию) |
+| `DEBTSTER_INTEGRATION_KEY` | Секретный ключ server-to-server API для очереди корректировок стажёров |
 
 ### Авторизация в Debtster API
 

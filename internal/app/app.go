@@ -20,29 +20,31 @@ import (
 )
 
 type Config struct {
-	DatabaseURL  string
-	DebtsterAPI  string
-	DebtsterKey  string
-	DebtsterMock bool
-	HTTPAddr     string
-	StaticDir    string
-	AppSecret    string
-	SuperLogin   string
-	SuperPass    string
-	RedisPrefix  string
-	Redis        rediscache.ConnectionInfo
+	DatabaseURL            string
+	DebtsterAPI            string
+	DebtsterKey            string
+	DebtsterMock           bool
+	HTTPAddr               string
+	StaticDir              string
+	AppSecret              string
+	SuperLogin             string
+	SuperPass              string
+	RedisPrefix            string
+	Redis                  rediscache.ConnectionInfo
+	DebtsterIntegrationKey string
 }
 
 type App struct {
-	db          *pgxpool.Pool
-	redis       *rediscache.Client
-	redisPrefix string
-	debtsterAPI string
-	httpClient  *http.Client
-	static      string
-	secret      []byte
-	progress    *progressHub
-	reports     *reportHub
+	db                     *pgxpool.Pool
+	redis                  *rediscache.Client
+	redisPrefix            string
+	debtsterIntegrationKey string
+	debtsterAPI            string
+	httpClient             *http.Client
+	static                 string
+	secret                 []byte
+	progress               *progressHub
+	reports                *reportHub
 }
 
 type progressHub struct {
@@ -69,7 +71,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer rediscache.Close(redisClient)
 
-	a := &App{db: db, redis: redisClient, redisPrefix: cfg.RedisPrefix, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a := &App{db: db, redis: redisClient, redisPrefix: cfg.RedisPrefix, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
 	a.httpClient = newDebtsterClient(cfg.DebtsterKey, cfg.DebtsterMock)
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
@@ -107,6 +109,11 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("DELETE /api/users/{id}", a.deleteUser)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
 	m.HandleFunc("GET /api/trainees", a.trainees)
+	m.HandleFunc("GET /api/trainees/correction-details", a.traineeCorrectionDetails)
+	m.HandleFunc("POST /api/trainee-correction-requests", a.createTraineeCorrectionRequest)
+	m.HandleFunc("GET /api/integrations/debtster/trainee-correction-requests", a.debtsterCorrectionRequests)
+	m.HandleFunc("POST /api/integrations/debtster/trainee-correction-requests/{id}/claim", a.debtsterCorrectionClaim)
+	m.HandleFunc("POST /api/integrations/debtster/trainee-correction-requests/{id}/result", a.debtsterCorrectionResult)
 	m.HandleFunc("GET /api/daily-plans", a.dailyPlans)
 	m.HandleFunc("PUT /api/daily-plans", a.updateDailyPlans)
 	m.HandleFunc("GET /api/report-access", a.reportAccessUsers)
@@ -390,10 +397,19 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tx, beginErr := a.db.Begin(ctx)
-		if beginErr != nil { serverError(w, beginErr); return }
+		if beginErr != nil {
+			serverError(w, beginErr)
+			return
+		}
 		defer tx.Rollback(ctx)
-		if err = insertMissingDebtsterRows(ctx, tx, reportID, vacancies); err != nil { serverError(w, err); return }
-		if err = tx.Commit(ctx); err != nil { serverError(w, err); return }
+		if err = insertMissingDebtsterRows(ctx, tx, reportID, vacancies); err != nil {
+			serverError(w, err)
+			return
+		}
+		if err = tx.Commit(ctx); err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	rows, err := a.loadRows(ctx, reportID)
 	if err != nil {
@@ -595,7 +611,7 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 	}
 	for i := range out {
 		hr, err := a.db.Query(ctx, `SELECT full_name,position FROM hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, out[i].ID)
- 		if err != nil {
+		if err != nil {
 			return nil, err
 		}
 		for hr.Next() {

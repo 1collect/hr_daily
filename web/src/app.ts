@@ -15,6 +15,7 @@ type CorrectionValues={openVacancies:number;plannedReserve:number;invitedCandida
 type CorrectionChange={rowId:string;unitName:string;before:CorrectionValues;after:CorrectionValues;edits?:(CandidateCorrectionDiff&{category:string})[]};
 type CorrectionRequest={id:string;reportDate:string;reportType:'rp'|'main_office';userId:string;employeeName:string;username:string;note:string;changes:CorrectionChange[];status:'pending'|'approved'|'rejected';reviewNote:string;reviewerName:string;createdAt:string;reviewedAt?:string};
 type TraineeReport={report_type_id:number;department:string;report_date:string;reporter_id:number;trainee_id:number|null;full_name:string;status_id:string;source:string;interview_date:string|null;security_approval_date:string|null;internship_start_date:string|null;task_start_date:string|null;note:string;file_name:string;file_object_key:string;matches:{full_name:string;score:number}[]};
+type TraineeCorrectionDetail={fullName:string;category:string;reportDate:string;department:string;responsible:string;addedAt:string;reportRowId:string};
 const content=document.querySelector<HTMLElement>('#content')!;
 const modalRoot=document.querySelector<HTMLElement>('#modal-root')!;
 const datePickerRoot=document.querySelector<HTMLElement>('#date-picker-root')!;
@@ -187,10 +188,11 @@ function traineeRowClass(row:TraineeReport){
  if(source==='ОК'&&row.matches.length===0)return 'trainee-ok-unmatched';
  return '';
 }
-function traineeSearchResults(row:TraineeReport){
+function traineeSearchResults(row:TraineeReport,index:number){
  if(!Array.isArray(row.matches))return '<td class="trainee-search-result-cell">Поиск недоступен</td>';
  if(!row.matches.length)return '<td class="trainee-search-result-cell">Не найдено</td>';
- return `<td class="trainee-search-result-cell"><ul class="trainee-matches" aria-label="Возможные совпадения в нашей базе">${row.matches.map(match=>`<li><span>${esc(match.full_name)}</span><small aria-label="Сходство ФИО: ${esc(match.score)}%">${esc(match.score)}%</small></li>`).join('')}</ul></td>`;
+ const action=row.source.trim().toUpperCase()==='ДИР'?`<button class="btn btn-outline trainee-correction-button" type="button" data-trainee-index="${index}">Отправить на корректировку</button>`:'';
+ return `<td class="trainee-search-result-cell"><ul class="trainee-matches" aria-label="Возможные совпадения в нашей базе">${row.matches.map(match=>`<li><span>${esc(match.full_name)}</span><small aria-label="Сходство ФИО: ${esc(match.score)}%">${esc(match.score)}%</small></li>`).join('')}</ul>${action}</td>`;
 }
 function traineeNameCell(row:TraineeReport,index:number){
  const unmatched=Array.isArray(row.matches)&&row.matches.length===0;
@@ -208,6 +210,21 @@ async function traineeLowMatchesModal(row:TraineeReport,button:HTMLButtonElement
   showInfoModal('Слабые совпадения',`<div class="trainee-match-detail"><div class="trainee-match-person"><small>Стажёр</small><b>${esc(row.full_name)}</b><span>${esc(row.department)} · поиск за последние 30 дней</span></div><p>Варианты ниже основного порога 55%:</p>${results}</div>`);
  }catch(error){toast((error as Error).message,true)}finally{button.disabled=false;button.classList.remove('is-loading')}
 }
+async function traineeCorrectionModal(row:TraineeReport,button:HTMLButtonElement){
+ const date=reportDate;button.disabled=true;button.classList.add('is-loading');
+ try{
+  const details=await api<TraineeCorrectionDetail[]>(`/api/trainees/correction-details?reportDate=${encodeURIComponent(date)}&name=${encodeURIComponent(row.matches[0]?.full_name||row.full_name)}`);
+  if(!details.length){toast('Подробности записи в нашей базе не найдены',true);return}
+  const categoryLabel=(value:string)=>({invited_candidates:'Приглашённые кандидаты',interviewed_candidates:'Прошедшие собеседование',interns:'Стажёры',reserve_candidates:'Кандидаты в резерве'}[value]||value);
+  const detailMarkup=details.map((item,index)=>`<label class="trainee-correction-option"><input type="radio" name="trainee-correction-record" value="${index}" ${index===0?'checked':''}><span><b>${esc(item.fullName)}</b><small>${esc(categoryLabel(item.category))} · ${esc(item.department)} · отчёт ${esc(displayDate(item.reportDate))}</small><small>Ответственный: ${esc(item.responsible||'не указан')} · добавлено: ${esc(new Date(item.addedAt).toLocaleString('ru-RU'))}</small></span></label>`).join('');
+  showModal('Отправить стажёра на корректировку',`<div class="trainee-correction-detail"><div class="modal-intro"><b>${esc(row.full_name)}</b><span>Источник ДИР · ${esc(row.department)} · отчёт ${esc(displayDate(row.report_date))}</span></div><p>Выберите запись из нашей базы. В Debtster будет отправлен запрос на исправление источника с ДИР на ОК.</p><div class="trainee-correction-options">${detailMarkup}</div><div class="field"><label>Комментарий</label><textarea id="trainee-correction-note" class="input" maxlength="1000" rows="3" placeholder="Дополнительная информация"></textarea></div></div>`,async()=>{
+   const selected=Number((modalRoot.querySelector<HTMLInputElement>('input[name="trainee-correction-record"]:checked'))?.value||'0');
+   const note=(modalRoot.querySelector<HTMLTextAreaElement>('#trainee-correction-note')?.value||'').trim();
+   const save=modalRoot.querySelector<HTMLButtonElement>('.save')!;save.disabled=true;save.textContent='Отправка…';
+   try{await api('/api/trainee-correction-requests',{method:'POST',body:JSON.stringify({reportDate:row.report_date,department:row.department,reporterId:row.reporter_id,debtsterTraineeId:row.trainee_id,debtsterFullName:row.full_name,debtsterSource:row.source,localRecord:details[selected],proposedChange:{source:'ОК'},note})});closeModal();button.textContent='Запрос отправлен';button.classList.remove('btn-outline');button.classList.add('btn-success');toast('Запрос отправлен в Debtster')}catch(error){save.disabled=false;save.textContent='Отправить запрос';toast((error as Error).message,true)}
+  },()=>{const save=modalRoot.querySelector<HTMLButtonElement>('.save')!;save.textContent='Отправить запрос'});
+ }catch(error){toast((error as Error).message,true)}finally{button.disabled=false;button.classList.remove('is-loading')}
+}
 async function traineeReportsPage(){
  setHeader('Отчеты по стажерам','Актуальные данные по стажерам подразделений');
  const rows=await api<TraineeReport[]>(`/api/trainees?report_date=${encodeURIComponent(reportDate)}`);
@@ -216,10 +233,11 @@ async function traineeReportsPage(){
  const okUnmatched=rows.filter(row=>traineeRowClass(row)==='trainee-ok-unmatched').length;
  const cell=(value:unknown,className='',tooltip='')=>`<td class="${className}" ${tooltip?`data-tooltip="${esc(tooltip)}"`:''}>${value===null||value===undefined||value===''?'—':esc(value)}</td>`;
  content.innerHTML=`<div class="toolbar trainee-toolbar"><div class="date-switcher"><button class="btn icon-btn" id="prev-day" aria-label="Предыдущий рабочий день">${icons.left}</button><button class="report-date-button" id="report-date" type="button" aria-haspopup="dialog" aria-label="Выбрать дату отчёта"><span>${displayDate(reportDate)}</span>${icons.calendar}</button><button class="btn icon-btn" id="next-day" aria-label="Следующий рабочий день">${icons.right}</button></div><span class="trainee-count">Стажеров: <b>${rows.length}</b></span><div class="spacer"></div><div class="trainee-summary" aria-label="Сводка поиска"><span class="trainee-summary-item matched">С совпадениями <b>${matched}</b></span><span class="trainee-summary-item attention" title="Источник ДИР, найдены возможные совпадения в нашей базе">ДИР · есть совпадения <b>${directorMatches}</b></span><span class="trainee-summary-item missing" title="Источник ОК, в нашей базе совпадения не найдены">ОК · не найдено <b>${okUnmatched}</b></span></div></div>
- <div class="sheet-wrap trainee-sheet-wrap"><table class="sheet trainee-sheet"><colgroup><col class="trainee-number"><col class="trainee-department"><col class="trainee-name"><col class="trainee-source"><col class="trainee-date"><col class="trainee-search-result"></colgroup><thead><tr><th>№</th><th>РП</th><th>Стажер</th><th>Источник</th><th>Дата собеседования</th><th>Результат поиска<small class="trainee-search-hint">Возможные совпадения · сходство ФИО</small></th></tr></thead><tbody>${rows.length?rows.map((row,index)=>`<tr class="${traineeRowClass(row)}">${cell(index+1,'trainee-number-cell')}${cell(row.department,'primary-trainee-cell',row.department)}${traineeNameCell(row,index)}${cell(row.source)}${cell(traineeDate(row.interview_date))}${traineeSearchResults(row)}</tr>`).join(''):`<tr><td class="trainee-table-empty" colspan="6">За ${displayDate(reportDate)} данных по стажерам нет</td></tr>`}</tbody></table></div>`;
+ <div class="sheet-wrap trainee-sheet-wrap"><table class="sheet trainee-sheet"><colgroup><col class="trainee-number"><col class="trainee-department"><col class="trainee-name"><col class="trainee-source"><col class="trainee-date"><col class="trainee-search-result"></colgroup><thead><tr><th>№</th><th>РП</th><th>Стажер</th><th>Источник</th><th>Дата собеседования</th><th>Результат поиска<small class="trainee-search-hint">Возможные совпадения · сходство ФИО</small></th></tr></thead><tbody>${rows.length?rows.map((row,index)=>`<tr class="${traineeRowClass(row)}">${cell(index+1,'trainee-number-cell')}${cell(row.department,'primary-trainee-cell',row.department)}${traineeNameCell(row,index)}${cell(row.source)}${cell(traineeDate(row.interview_date))}${traineeSearchResults(row,index)}</tr>`).join(''):`<tr><td class="trainee-table-empty" colspan="6">За ${displayDate(reportDate)} данных по стажерам нет</td></tr>`}</tbody></table></div>`;
  const dateButton=content.querySelector<HTMLButtonElement>('#report-date')!;dateButton.onclick=()=>openDatePicker(dateButton);
  content.querySelector<HTMLButtonElement>('#prev-day')!.onclick=()=>shiftDate(-1);content.querySelector<HTMLButtonElement>('#next-day')!.onclick=()=>shiftDate(1);
  content.querySelectorAll<HTMLButtonElement>('.trainee-name-button').forEach(button=>button.onclick=()=>traineeLowMatchesModal(rows[Number(button.dataset.traineeIndex)],button));
+ content.querySelectorAll<HTMLButtonElement>('.trainee-correction-button').forEach(button=>button.onclick=()=>traineeCorrectionModal(rows[Number(button.dataset.traineeIndex)],button));
  wireSheetHighlighting();restoreScroll()
 }
 function reportEmployeeOptions(){const option=(u:User)=>`<option value="${u.id}" ${u.id===selectedEmployee?'selected':''}>${esc([u.lastName,u.firstName,u.middleName].filter(Boolean).join(' '))}</option>`;return `<option value="">Все сотрудники</option>${adminUsers.map(option).join('')}`}

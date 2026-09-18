@@ -54,16 +54,17 @@ func main() {
 
 	mock := debtsterMock()
 	cfg := app.Config{
-		DatabaseURL:  require("DATABASE_URL"),
-		DebtsterAPI:  debtsterURL(mock),
-		DebtsterKey:  debtsterKey(mock),
-		DebtsterMock: mock,
-		HTTPAddr:     require("HTTP_ADDR"),
-		StaticDir:    require("STATIC_DIR"),
-		AppSecret:    require("APP_SECRET"),
-		SuperLogin:   require("SUPERADMIN_LOGIN"),
-		SuperPass:    require("SUPERADMIN_PASSWORD"),
-		RedisPrefix:  getenv("REDIS_PREFIX", "debtster_database"),
+		DatabaseURL:            require("DATABASE_URL"),
+		DebtsterAPI:            debtsterURL(mock),
+		DebtsterKey:            debtsterKey(mock),
+		DebtsterMock:           mock,
+		HTTPAddr:               require("HTTP_ADDR"),
+		StaticDir:              require("STATIC_DIR"),
+		AppSecret:              require("APP_SECRET"),
+		SuperLogin:             require("SUPERADMIN_LOGIN"),
+		SuperPass:              require("SUPERADMIN_PASSWORD"),
+		RedisPrefix:            getenv("REDIS_PREFIX", "debtster_database"),
+		DebtsterIntegrationKey: getenv("DEBTSTER_INTEGRATION_KEY", ""),
 		Redis: rediscache.ConnectionInfo{
 			Addr:        getenv("REDIS_ADDR", "127.0.0.1:6379"),
 			Password:    getenv("REDIS_PASSWORD", "hello-world"),

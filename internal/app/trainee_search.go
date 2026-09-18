@@ -9,15 +9,22 @@ import (
 )
 
 type traineeMatch struct {
-	FullName string `json:"full_name"`
-	Score    int    `json:"score"`
+	FullName    string `json:"full_name"`
+	Score       int    `json:"score"`
+	ReportRowID string `json:"report_row_id,omitempty"`
+}
+
+type traineeSearchCandidate struct {
+	FullName    string
+	ReportRowID string
 }
 
 // Read the actual candidate lists from the selected day and the preceding 29 days,
 // excluding dismissed workers and reports outside this rolling 30-day window.
 // Keep original names for display; normalization belongs only to the search index.
-func (a *App) loadTraineeSearchNames(ctx context.Context, date string) ([]string, error) {
+func (a *App) loadTraineeSearchNames(ctx context.Context, date string) ([]traineeSearchCandidate, error) {
 	rows, err := a.db.Query(ctx, `SELECT DISTINCT p.full_name
+		, rr.id::text
 		FROM report_row_people p
 		JOIN report_rows rr ON rr.id=p.report_row_id
 		JOIN reports r ON r.id=rr.report_id
@@ -28,15 +35,15 @@ func (a *App) loadTraineeSearchNames(ctx context.Context, date string) ([]string
 		return nil, err
 	}
 	defer rows.Close()
-	names := []string{}
+	candidates := []traineeSearchCandidate{}
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var candidate traineeSearchCandidate
+		if err := rows.Scan(&candidate.FullName, &candidate.ReportRowID); err != nil {
 			return nil, err
 		}
-		names = append(names, name)
+		candidates = append(candidates, candidate)
 	}
-	return names, rows.Err()
+	return candidates, rows.Err()
 }
 
 var nameTransliteration = strings.NewReplacer(
@@ -67,15 +74,28 @@ func nameGrams(tokens []string) map[string]struct{} {
 }
 
 type traineeNameIndex struct {
-	names    []string
-	tokens   [][]string
-	postings map[string][]int
+	names      []string
+	candidates []traineeSearchCandidate
+	tokens     [][]string
+	postings   map[string][]int
 }
 
 func newTraineeNameIndex(names []string) traineeNameIndex {
-	idx := traineeNameIndex{names: names, postings: map[string][]int{}}
-	for id, name := range names {
-		tokens := nameTokens(name)
+	candidates := make([]traineeSearchCandidate, len(names))
+	for i, name := range names {
+		candidates[i] = traineeSearchCandidate{FullName: name}
+	}
+	return newTraineeCandidateIndex(candidates)
+}
+
+func newTraineeCandidateIndex(candidates []traineeSearchCandidate) traineeNameIndex {
+	names := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		names[i] = candidate.FullName
+	}
+	idx := traineeNameIndex{names: names, candidates: candidates, postings: map[string][]int{}}
+	for id, candidate := range candidates {
+		tokens := nameTokens(candidate.FullName)
 		idx.tokens = append(idx.tokens, tokens)
 		for gram := range nameGrams(tokens) {
 			idx.postings[gram] = append(idx.postings[gram], id)
@@ -91,7 +111,7 @@ func (idx traineeNameIndex) search(name string, threshold int) []traineeMatch {
 	// Such queries may have no bigrams, so the postings shortlist is not complete
 	// for a low threshold. Check every indexed name to avoid hiding valid matches.
 	if threshold <= 54 {
-		for id := range idx.names {
+		for id := range idx.candidates {
 			ids[id] = struct{}{}
 		}
 	} else {
@@ -105,7 +125,11 @@ func (idx traineeNameIndex) search(name string, threshold int) []traineeMatch {
 	for id := range ids {
 		score := nameSimilarity(tokens, idx.tokens[id])
 		if score >= threshold {
-			matches = append(matches, traineeMatch{idx.names[id], score})
+			matches = append(matches, traineeMatch{
+				FullName:    idx.candidates[id].FullName,
+				Score:       score,
+				ReportRowID: idx.candidates[id].ReportRowID,
+			})
 		}
 	}
 	sort.Slice(matches, func(i, j int) bool {

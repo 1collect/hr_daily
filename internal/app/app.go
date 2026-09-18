@@ -163,7 +163,7 @@ func (a *App) trainees(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
-		index := newTraineeNameIndex(names)
+		index := newTraineeCandidateIndex(names)
 		cache := map[string][]traineeMatch{}
 		for i := range rows {
 			name := rows[i].FullName

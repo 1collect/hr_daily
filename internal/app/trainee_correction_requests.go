@@ -59,6 +59,7 @@ type traineeCorrectionResultInput struct {
 func (a *App) traineeCorrectionDetails(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	date := strings.TrimSpace(r.URL.Query().Get("reportDate"))
+	reportRowID := strings.TrimSpace(r.URL.Query().Get("reportRowId"))
 	if name == "" || date == "" {
 		problem(w, http.StatusUnprocessableEntity, "Укажите ФИО и дату отчёта")
 		return
@@ -86,9 +87,10 @@ func (a *App) traineeCorrectionDetails(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN employees e ON e.id = u.employee_id
 		WHERE r.report_date BETWEEN $2::date - 29 AND $2::date
 		  AND lower(trim(p.full_name)) = lower(trim($1))
+		  AND ($3 = '' OR rr.id::text = $3)
 		GROUP BY p.full_name, p.category, r.report_date,
 		         COALESCE(o.name, rr.office_name_snapshot, rr.debtster_department_name, 'Не указан'), rr.id
-		ORDER BY r.report_date DESC, min(p.created_at) DESC`, name, date)
+		ORDER BY r.report_date DESC, min(p.created_at) DESC`, name, date, reportRowID)
 	if err != nil {
 		serverError(w, err)
 		return

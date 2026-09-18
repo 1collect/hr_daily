@@ -14,7 +14,7 @@ type ResponsibleUser={id:string;firstName:string;lastName:string;middleName:stri
 type CorrectionValues={openVacancies:number;plannedReserve:number;invitedCandidates:number;interviewedCandidates:number;interns:number;reserveCandidates:number;dismissedWorkers:number;responsibleIds:string[];hiredWorkers:HiredWorker[];people:Partial<Record<PeopleCategory,string[]>>};
 type CorrectionChange={rowId:string;unitName:string;before:CorrectionValues;after:CorrectionValues;edits?:(CandidateCorrectionDiff&{category:string})[]};
 type CorrectionRequest={id:string;reportDate:string;reportType:'rp'|'main_office';userId:string;employeeName:string;username:string;note:string;changes:CorrectionChange[];status:'pending'|'approved'|'rejected';reviewNote:string;reviewerName:string;createdAt:string;reviewedAt?:string};
-type TraineeReport={report_type_id:number;department:string;report_date:string;reporter_id:number;trainee_id:number|null;full_name:string;status_id:string;source:string;interview_date:string|null;security_approval_date:string|null;internship_start_date:string|null;task_start_date:string|null;note:string;file_name:string;file_object_key:string;matches:{full_name:string;score:number}[]};
+type TraineeReport={report_type_id:number;department:string;report_date:string;reporter_id:number;trainee_id:number|null;full_name:string;status_id:string;source:string;interview_date:string|null;security_approval_date:string|null;internship_start_date:string|null;task_start_date:string|null;note:string;file_name:string;file_object_key:string;matches:{full_name:string;score:number;report_row_id?:string}[]};
 type TraineeCorrectionDetail={fullName:string;category:string;reportDate:string;department:string;responsible:string;addedAt:string;reportRowId:string};
 type TraineeCorrectionRequest={id:string;reportDate:string;department:string;debtsterFullName:string;debtsterSource:string;localRecord:TraineeCorrectionDetail;proposedChange:Record<string,string>;note:string;status:string;createdAt:string;processedAt?:string};
 const content=document.querySelector<HTMLElement>('#content')!;
@@ -219,7 +219,8 @@ async function traineeLowMatchesModal(row:TraineeReport,button:HTMLButtonElement
 async function traineeCorrectionModal(row:TraineeReport,button:HTMLButtonElement){
  const date=reportDate;button.disabled=true;button.classList.add('is-loading');
  try{
-  const details=await api<TraineeCorrectionDetail[]>(`/api/trainees/correction-details?reportDate=${encodeURIComponent(date)}&name=${encodeURIComponent(row.matches[0]?.full_name||row.full_name)}`);
+  const match=row.matches[0];
+  const details=await api<TraineeCorrectionDetail[]>(`/api/trainees/correction-details?reportDate=${encodeURIComponent(date)}&name=${encodeURIComponent(match?.full_name||row.full_name)}${match?.report_row_id?`&reportRowId=${encodeURIComponent(match.report_row_id)}`:''}`);
   if(!details.length){toast('Подробности записи в нашей базе не найдены',true);return}
   const categoryLabel=(value:string)=>({invited_candidates:'Приглашённые кандидаты',interviewed_candidates:'Прошедшие собеседование',interns:'Стажёры',reserve_candidates:'Кандидаты в резерве'}[value]||value);
   const detailMarkup=details.map((item,index)=>`<label class="trainee-correction-option"><input type="radio" name="trainee-correction-record" value="${index}" ${index===0?'checked':''}><span><b>${esc(item.fullName)}</b><small>${esc(categoryLabel(item.category))} · ${esc(item.department)} · отчёт ${esc(displayDate(item.reportDate))}</small><small>Ответственный: ${esc(item.responsible||'не указан')} · добавлено: ${esc(new Date(item.addedAt).toLocaleString('ru-RU'))}</small></span></label>`).join('');

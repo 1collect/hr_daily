@@ -191,12 +191,17 @@ function traineeRowClass(row:TraineeReport){
 function traineeSearchResults(row:TraineeReport,index:number){
  if(!Array.isArray(row.matches))return '<td class="trainee-search-result-cell">Поиск недоступен</td>';
  if(!row.matches.length)return '<td class="trainee-search-result-cell">Не найдено</td>';
- const action=row.source.trim().toUpperCase()==='ДИР'?`<button class="btn btn-outline trainee-correction-button" type="button" data-trainee-index="${index}">Отправить на корректировку</button>`:'';
- return `<td class="trainee-search-result-cell"><ul class="trainee-matches" aria-label="Возможные совпадения в нашей базе">${row.matches.map(match=>`<li><span>${esc(match.full_name)}</span><small aria-label="Сходство ФИО: ${esc(match.score)}%">${esc(match.score)}%</small></li>`).join('')}</ul>${action}</td>`;
+ return `<td class="trainee-search-result-cell"><ul class="trainee-matches" aria-label="Возможные совпадения в нашей базе">${row.matches.map(match=>`<li><span>${esc(match.full_name)}</span><small aria-label="Сходство ФИО: ${esc(match.score)}%">${esc(match.score)}%</small></li>`).join('')}</ul></td>`;
 }
 function traineeNameCell(row:TraineeReport,index:number){
  const unmatched=Array.isArray(row.matches)&&row.matches.length===0;
- return `<td class="primary-trainee-cell">${unmatched?`<button class="trainee-name-button" type="button" data-trainee-index="${index}" title="Показать совпадения ниже 55%">${esc(row.full_name)}</button>`:esc(row.full_name)}</td>`;
+ const canRequest=row.source.trim().toUpperCase()==='ДИР'&&Array.isArray(row.matches)&&row.matches.length>0;
+ const nameButton=canRequest
+  ? `<button class="trainee-name-button trainee-correction-trigger" type="button" data-trainee-index="${index}" title="Запросить корректировку">${esc(row.full_name)}</button>`
+  : unmatched
+   ? `<button class="trainee-name-button" type="button" data-trainee-index="${index}" title="Показать совпадения ниже 55%">${esc(row.full_name)}</button>`
+   : esc(row.full_name);
+ return `<td class="primary-trainee-cell">${nameButton}</td>`;
 }
 async function traineeLowMatchesModal(row:TraineeReport,button:HTMLButtonElement){
  const date=reportDate;
@@ -217,7 +222,7 @@ async function traineeCorrectionModal(row:TraineeReport,button:HTMLButtonElement
   if(!details.length){toast('Подробности записи в нашей базе не найдены',true);return}
   const categoryLabel=(value:string)=>({invited_candidates:'Приглашённые кандидаты',interviewed_candidates:'Прошедшие собеседование',interns:'Стажёры',reserve_candidates:'Кандидаты в резерве'}[value]||value);
   const detailMarkup=details.map((item,index)=>`<label class="trainee-correction-option"><input type="radio" name="trainee-correction-record" value="${index}" ${index===0?'checked':''}><span><b>${esc(item.fullName)}</b><small>${esc(categoryLabel(item.category))} · ${esc(item.department)} · отчёт ${esc(displayDate(item.reportDate))}</small><small>Ответственный: ${esc(item.responsible||'не указан')} · добавлено: ${esc(new Date(item.addedAt).toLocaleString('ru-RU'))}</small></span></label>`).join('');
-  showModal('Отправить стажёра на корректировку',`<div class="trainee-correction-detail"><div class="modal-intro"><b>${esc(row.full_name)}</b><span>Источник ДИР · ${esc(row.department)} · отчёт ${esc(displayDate(row.report_date))}</span></div><p>Выберите запись из нашей базы. В Debtster будет отправлен запрос на исправление источника с ДИР на ОК.</p><div class="trainee-correction-options">${detailMarkup}</div><div class="field"><label>Комментарий</label><textarea id="trainee-correction-note" class="input" maxlength="1000" rows="3" placeholder="Дополнительная информация"></textarea></div></div>`,async()=>{
+  showModal('Запросить корректировку',`<div class="trainee-correction-detail"><div class="modal-intro"><b>${esc(row.full_name)}</b><span>Источник ДИР · ${esc(row.department)} · отчёт ${esc(displayDate(row.report_date))}</span></div><p>Выберите запись из нашей базы. В Debtster будет отправлен запрос на изменение источника с ДИР на ОК.</p><div class="trainee-correction-options">${detailMarkup}</div><div class="field"><label>Комментарий</label><textarea id="trainee-correction-note" class="input" maxlength="1000" rows="3" placeholder="Дополнительная информация"></textarea></div></div>`,async()=>{
    const selected=Number((modalRoot.querySelector<HTMLInputElement>('input[name="trainee-correction-record"]:checked'))?.value||'0');
    const note=(modalRoot.querySelector<HTMLTextAreaElement>('#trainee-correction-note')?.value||'').trim();
    const save=modalRoot.querySelector<HTMLButtonElement>('.save')!;save.disabled=true;save.textContent='Отправка…';
@@ -236,8 +241,7 @@ async function traineeReportsPage(){
  <div class="sheet-wrap trainee-sheet-wrap"><table class="sheet trainee-sheet"><colgroup><col class="trainee-number"><col class="trainee-department"><col class="trainee-name"><col class="trainee-source"><col class="trainee-date"><col class="trainee-search-result"></colgroup><thead><tr><th>№</th><th>РП</th><th>Стажер</th><th>Источник</th><th>Дата собеседования</th><th>Результат поиска<small class="trainee-search-hint">Возможные совпадения · сходство ФИО</small></th></tr></thead><tbody>${rows.length?rows.map((row,index)=>`<tr class="${traineeRowClass(row)}">${cell(index+1,'trainee-number-cell')}${cell(row.department,'primary-trainee-cell',row.department)}${traineeNameCell(row,index)}${cell(row.source)}${cell(traineeDate(row.interview_date))}${traineeSearchResults(row,index)}</tr>`).join(''):`<tr><td class="trainee-table-empty" colspan="6">За ${displayDate(reportDate)} данных по стажерам нет</td></tr>`}</tbody></table></div>`;
  const dateButton=content.querySelector<HTMLButtonElement>('#report-date')!;dateButton.onclick=()=>openDatePicker(dateButton);
  content.querySelector<HTMLButtonElement>('#prev-day')!.onclick=()=>shiftDate(-1);content.querySelector<HTMLButtonElement>('#next-day')!.onclick=()=>shiftDate(1);
- content.querySelectorAll<HTMLButtonElement>('.trainee-name-button').forEach(button=>button.onclick=()=>traineeLowMatchesModal(rows[Number(button.dataset.traineeIndex)],button));
- content.querySelectorAll<HTMLButtonElement>('.trainee-correction-button').forEach(button=>button.onclick=()=>traineeCorrectionModal(rows[Number(button.dataset.traineeIndex)],button));
+ content.querySelectorAll<HTMLButtonElement>('.trainee-name-button').forEach(button=>button.onclick=()=>button.classList.contains('trainee-correction-trigger')?traineeCorrectionModal(rows[Number(button.dataset.traineeIndex)],button):traineeLowMatchesModal(rows[Number(button.dataset.traineeIndex)],button));
  wireSheetHighlighting();restoreScroll()
 }
 function reportEmployeeOptions(){const option=(u:User)=>`<option value="${u.id}" ${u.id===selectedEmployee?'selected':''}>${esc([u.lastName,u.firstName,u.middleName].filter(Boolean).join(' '))}</option>`;return `<option value="">Все сотрудники</option>${adminUsers.map(option).join('')}`}

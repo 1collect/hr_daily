@@ -16,6 +16,7 @@ type CorrectionChange={rowId:string;unitName:string;before:CorrectionValues;afte
 type CorrectionRequest={id:string;reportDate:string;reportType:'rp'|'main_office';userId:string;employeeName:string;username:string;note:string;changes:CorrectionChange[];status:'pending'|'approved'|'rejected';reviewNote:string;reviewerName:string;createdAt:string;reviewedAt?:string};
 type TraineeReport={report_type_id:number;department:string;report_date:string;reporter_id:number;trainee_id:number|null;full_name:string;status_id:string;source:string;interview_date:string|null;security_approval_date:string|null;internship_start_date:string|null;task_start_date:string|null;note:string;file_name:string;file_object_key:string;matches:{full_name:string;score:number}[]};
 type TraineeCorrectionDetail={fullName:string;category:string;reportDate:string;department:string;responsible:string;addedAt:string;reportRowId:string};
+type TraineeCorrectionRequest={id:string;reportDate:string;department:string;debtsterFullName:string;debtsterSource:string;localRecord:TraineeCorrectionDetail;proposedChange:Record<string,string>;note:string;status:string;createdAt:string;processedAt?:string};
 const content=document.querySelector<HTMLElement>('#content')!;
 const modalRoot=document.querySelector<HTMLElement>('#modal-root')!;
 const datePickerRoot=document.querySelector<HTMLElement>('#date-picker-root')!;
@@ -477,7 +478,37 @@ function correctionSummary(request:CorrectionRequest){const total=correctionChan
 async function correctionRequestsPage(){
  const requests=await api<CorrectionRequest[]>('/api/correction-requests');
  if(manager())setPendingCorrectionCount(requests.filter(request=>request.status==='pending').length);
- if(manager())renderCorrectionAdmin(requests);else renderCorrectionEmployee(requests)
+ if(manager()){
+  const traineeRequests=await api<TraineeCorrectionRequest[]>('/api/trainee-correction-requests');
+  renderCorrectionAdmin(requests);
+  addCorrectionRequestTabs(traineeRequests);
+ }else renderCorrectionEmployee(requests)
+}
+
+function addCorrectionRequestTabs(traineeRequests:TraineeCorrectionRequest[]){
+ const head=content.querySelector<HTMLElement>('.correction-admin-head');
+ if(!head)return;
+ head.insertAdjacentHTML('afterbegin','<div class="request-page-tabs" role="tablist"><button class="is-active" data-request-view="employee">Запросы сотрудников</button><button data-request-view="trainee">Корректировки стажёров <b></b></button></div>');
+ const traineeTab=head.querySelector<HTMLButtonElement>('[data-request-view="trainee"]')!;
+ traineeTab.querySelector('b')!.textContent=String(traineeRequests.filter(request=>request.status==='pending').length);
+ head.querySelectorAll<HTMLButtonElement>('[data-request-view]').forEach(button=>button.onclick=()=>{
+  head.querySelectorAll('[data-request-view]').forEach(item=>item.classList.toggle('is-active',item===button));
+  const adminCard=content.querySelector<HTMLElement>('.correction-admin-card');
+  if(button.dataset.requestView==='trainee'){
+   if(adminCard)adminCard.hidden=true;
+   let panel=content.querySelector<HTMLElement>('.trainee-request-panel');
+   if(!panel){panel=document.createElement('section');panel.className='card admin-card trainee-request-panel';content.append(panel)}
+   panel.hidden=false;renderTraineeAdminRequests(panel,traineeRequests);
+  }else{
+   if(adminCard)adminCard.hidden=false;
+   const panel=content.querySelector<HTMLElement>('.trainee-request-panel');if(panel)panel.hidden=true;
+  }
+ });
+}
+
+function renderTraineeAdminRequests(panel:HTMLElement, requests:TraineeCorrectionRequest[]){
+ const rows=requests.map(item=>`<tr><td><b>${esc(item.debtsterFullName)}</b><small class="correction-created">${esc(item.department)} · ${displayDate(item.reportDate)}</small></td><td><span class="badge">${esc(item.debtsterSource)} → ${esc(item.proposedChange.source||'ОК')}</span></td><td><b>${esc(item.localRecord.fullName)}</b><small class="correction-created">Ответственный: ${esc(item.localRecord.responsible||'не указан')} · добавлено ${correctionDateTime(item.localRecord.addedAt)}</small></td><td>${item.status==='applied'?'<span class="correction-status approved"><i></i>Подтверждён</span>':'<span class="correction-status"><i></i>Отправлен</span>'}</td></tr>`).join('');
+ panel.innerHTML=`<div class="card-head"><div><h2>Корректировки стажёров</h2><span>Запросы, отправленные в Debtster</span></div></div><div class="table-scroll"><table class="data-table correction-table trainee-request-table"><thead><tr><th>Стажёр</th><th>Изменение</th><th>Запись в базе HR</th><th>Статус</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="text-center muted">Запросов пока нет</td></tr>'}</tbody></table></div>`;
 }
 
 function correctionStats(requests:CorrectionRequest[]){

@@ -111,6 +111,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/trainees", a.trainees)
 	m.HandleFunc("GET /api/trainees/correction-details", a.traineeCorrectionDetails)
 	m.HandleFunc("POST /api/trainee-correction-requests", a.createTraineeCorrectionRequest)
+	m.HandleFunc("GET /api/trainee-correction-requests", a.traineeCorrectionRequestsForUser)
 	m.HandleFunc("GET /api/integrations/debtster/trainee-correction-requests", a.debtsterCorrectionRequests)
 	m.HandleFunc("POST /api/integrations/debtster/trainee-correction-requests/{id}/claim", a.debtsterCorrectionClaim)
 	m.HandleFunc("POST /api/integrations/debtster/trainee-correction-requests/{id}/result", a.debtsterCorrectionResult)

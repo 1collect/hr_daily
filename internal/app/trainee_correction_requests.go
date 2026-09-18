@@ -162,6 +162,43 @@ func (a *App) createTraineeCorrectionRequest(w http.ResponseWriter, r *http.Requ
 	jsonOut(w, http.StatusCreated, map[string]any{"id": id, "status": "pending"})
 }
 
+func (a *App) traineeCorrectionRequestsForUser(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	query := `SELECT id::text,report_date::text,department,COALESCE(reporter_id,0),debtster_trainee_id,
+		debtster_full_name,debtster_source,local_record,proposed_change,note,status,debtster_note,
+		COALESCE(requested_by::text,''),created_at,processed_at
+		FROM trainee_correction_requests WHERE ($1 OR requested_by=$2::uuid) ORDER BY created_at DESC LIMIT 500`
+	rows, err := a.db.Query(r.Context(), query, isManager(claims), claims.UserID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+	items := []traineeCorrectionRequest{}
+	for rows.Next() {
+		var item traineeCorrectionRequest
+		var localJSON, changeJSON []byte
+		if err = rows.Scan(&item.ID, &item.ReportDate, &item.Department, &item.ReporterID, &item.DebtsterTraineeID, &item.DebtsterFullName, &item.DebtsterSource, &localJSON, &changeJSON, &item.Note, &item.Status, &item.DebtsterNote, &item.RequestedBy, &item.CreatedAt, &item.ProcessedAt); err != nil {
+			serverError(w, err)
+			return
+		}
+		if err = json.Unmarshal(localJSON, &item.LocalRecord); err != nil {
+			serverError(w, err)
+			return
+		}
+		if err = json.Unmarshal(changeJSON, &item.ProposedChange); err != nil {
+			serverError(w, err)
+			return
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonOut(w, http.StatusOK, items)
+}
+
 func (a *App) debtsterIntegrationAuthorized(w http.ResponseWriter, r *http.Request) bool {
 	key := strings.TrimSpace(a.debtsterIntegrationKey)
 	provided := strings.TrimSpace(r.Header.Get("X-API-Key"))

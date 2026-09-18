@@ -138,7 +138,17 @@ func (idx traineeNameIndex) search(name string, threshold int) []traineeMatch {
 		}
 		return matches[i].FullName < matches[j].FullName
 	})
-	return matches
+	unique := make([]traineeMatch, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		key := strings.Join(nameTokens(match.FullName), " ")
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, match)
+	}
+	return unique
 }
 
 func tokenSimilarity(a, b string) float64 {

@@ -130,6 +130,10 @@ func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	claims := claimsFrom(ctx)
+	if !isManager(claims) && !a.hasPermission(ctx, claims.UserID, "reports.main_office.view") {
+		problem(w, http.StatusForbidden, "Доступ к отчётам ГО закрыт")
+		return
+	}
 	if isManager(claims) {
 		employeeID := strings.TrimSpace(r.URL.Query().Get("employeeId"))
 		if employeeID != "" {

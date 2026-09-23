@@ -25,13 +25,15 @@ type sessionClaims struct {
 }
 
 type currentUser struct {
-	ID         string `json:"id"`
-	EmployeeID string `json:"employeeId,omitempty"`
-	Username   string `json:"username"`
-	Role       string `json:"role"`
-	FirstName  string `json:"firstName,omitempty"`
-	LastName   string `json:"lastName,omitempty"`
-	MiddleName string `json:"middleName,omitempty"`
+	ID                  string `json:"id"`
+	EmployeeID          string `json:"employeeId,omitempty"`
+	Username            string `json:"username"`
+	Role                string `json:"role"`
+	FirstName           string `json:"firstName,omitempty"`
+	LastName            string `json:"lastName,omitempty"`
+	MiddleName          string `json:"middleName,omitempty"`
+	CanAccessRP         bool   `json:"canAccessRP"`
+	CanAccessMainOffice bool   `json:"canAccessMainOffice"`
 }
 
 func (a *App) ensureSuperadmin(ctx context.Context, username, password string) error {
@@ -56,10 +58,12 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	var u currentUser
 	var hash string
 	err := a.db.QueryRow(r.Context(), `SELECT u.id,COALESCE(u.employee_id::text,''),u.username,u.role,u.password_hash,
-		COALESCE(e.first_name,''),COALESCE(e.last_name,''),COALESCE(e.middle_name,'')
+		COALESCE(e.first_name,''),COALESCE(e.last_name,''),COALESCE(e.middle_name,''),
+		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.rp.view'),
+		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.main_office.view')
 		FROM users u LEFT JOIN employees e ON e.id=u.employee_id
 		WHERE lower(u.username)=lower($1) AND u.active`, strings.TrimSpace(in.Username)).
-		Scan(&u.ID, &u.EmployeeID, &u.Username, &u.Role, &hash, &u.FirstName, &u.LastName, &u.MiddleName)
+		Scan(&u.ID, &u.EmployeeID, &u.Username, &u.Role, &hash, &u.FirstName, &u.LastName, &u.MiddleName, &u.CanAccessRP, &u.CanAccessMainOffice)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) != nil {
 		problem(w, http.StatusUnauthorized, "Неверный логин или пароль")
 		return
@@ -82,7 +86,10 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 func (a *App) me(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r.Context())
 	var u currentUser
-	err := a.db.QueryRow(r.Context(), `SELECT u.id,COALESCE(u.employee_id::text,''),u.username,u.role,COALESCE(e.first_name,''),COALESCE(e.last_name,''),COALESCE(e.middle_name,'') FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$1 AND u.active`, c.UserID).Scan(&u.ID, &u.EmployeeID, &u.Username, &u.Role, &u.FirstName, &u.LastName, &u.MiddleName)
+	err := a.db.QueryRow(r.Context(), `SELECT u.id,COALESCE(u.employee_id::text,''),u.username,u.role,COALESCE(e.first_name,''),COALESCE(e.last_name,''),COALESCE(e.middle_name,''),
+		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.rp.view'),
+		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.main_office.view')
+		FROM users u LEFT JOIN employees e ON e.id=u.employee_id WHERE u.id=$1 AND u.active`, c.UserID).Scan(&u.ID, &u.EmployeeID, &u.Username, &u.Role, &u.FirstName, &u.LastName, &u.MiddleName, &u.CanAccessRP, &u.CanAccessMainOffice)
 	if err != nil {
 		problem(w, 401, "Сессия недействительна")
 		return
@@ -150,6 +157,16 @@ func claimsFrom(ctx context.Context) sessionClaims {
 	return c
 }
 func isManager(c sessionClaims) bool { return c.Role == "admin" || c.Role == "superadmin" }
+
+func (a *App) hasPermission(ctx context.Context, userID, code string) bool {
+	var allowed bool
+	_ = a.db.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM permission_user pu
+		JOIN permissions p ON p.id=pu.permission_id
+		WHERE pu.user_id=$1 AND p.code=$2
+	)`, userID, code).Scan(&allowed)
+	return allowed
+}
 func requireManager(w http.ResponseWriter, r *http.Request) (sessionClaims, bool) {
 	c := claimsFrom(r.Context())
 	if !isManager(c) {

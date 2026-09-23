@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -17,6 +18,8 @@ type userRecord struct {
 	LastName                         string `json:"lastName"`
 	MiddleName                       string `json:"middleName"`
 	Active                           bool   `json:"active"`
+	CanAccessRP                      bool   `json:"canAccessRP"`
+	CanAccessMainOffice              bool   `json:"canAccessMainOffice"`
 	Plan                             int    `json:"plan"`
 	PlanFrom                         string `json:"planFrom"`
 	NextPlan                         int    `json:"nextPlan"`
@@ -43,12 +46,68 @@ type userInput struct {
 	LastName                 string `json:"lastName"`
 	MiddleName               string `json:"middleName"`
 	Active                   bool   `json:"active"`
+	CanAccessRP              bool   `json:"canAccessRP"`
+	CanAccessMainOffice      bool   `json:"canAccessMainOffice"`
 	Plan                     int    `json:"plan"`
 	PlanFrom                 string `json:"planFrom"`
 	MainOfficePlan           int    `json:"mainOfficePlan"`
 	MainOfficePlanFrom       string `json:"mainOfficePlanFrom"`
 	InvitationPlan           int    `json:"invitationPlan"`
 	MainOfficeInvitationPlan int    `json:"mainOfficeInvitationPlan"`
+}
+
+func setUserReportPermissions(ctx context.Context, tx pgx.Tx, userID string, rp, mainOffice bool) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM permission_user WHERE user_id=$1`, userID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO permission_user(permission_id,user_id)
+		SELECT id,$1 FROM permissions
+		WHERE (code='reports.rp.view' AND $2) OR (code='reports.main_office.view' AND $3)
+		ON CONFLICT DO NOTHING`, userID, rp, mainOffice)
+	return err
+}
+
+func (a *App) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	var in struct {
+		CanAccessRP         bool `json:"canAccessRP"`
+		CanAccessMainOffice bool `json:"canAccessMainOffice"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	ctx := r.Context()
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var employee bool
+	if err = tx.QueryRow(ctx, `SELECT role='employee' AND active AND NOT system FROM users WHERE id=$1`, r.PathValue("id")).Scan(&employee); err != nil {
+		if err == pgx.ErrNoRows {
+			problem(w, http.StatusNotFound, "Пользователь не найден")
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	if !employee {
+		problem(w, http.StatusUnprocessableEntity, "Права на отчёты настраиваются только для сотрудников")
+		return
+	}
+	if err = setUserReportPermissions(ctx, tx, r.PathValue("id"), in.CanAccessRP, in.CanAccessMainOffice); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	a.log(ctx, "user.permissions.updated", "user", r.PathValue("id"))
+	jsonOut(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (a *App) users(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +121,8 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 		roleFilter = "employee"
 	}
 	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active,
+		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.rp.view'),
+		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.main_office.view'),
 		COALESCE(p.plan_count,0),COALESCE(p.effective_from::text,''),COALESCE(np.plan_count,0),COALESCE(np.effective_from::text,''),
 		COALESCE(mp.plan_count,0),COALESCE(mp.effective_from::text,''),COALESCE(nmp.plan_count,0),COALESCE(nmp.effective_from::text,'')
 		,COALESCE(ip.plan_count,0),COALESCE(ip.effective_from::text,''),COALESCE(nip.plan_count,0),COALESCE(nip.effective_from::text,'')
@@ -85,7 +146,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	out := []userRecord{}
 	for q.Next() {
 		var x userRecord
-		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom, &x.InvitationPlan, &x.InvitationPlanFrom, &x.NextInvitationPlan, &x.NextInvitationPlanFrom, &x.MainOfficeInvitationPlan, &x.MainOfficeInvitationPlanFrom, &x.NextMainOfficeInvitationPlan, &x.NextMainOfficeInvitationPlanFrom); err != nil {
+		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.CanAccessRP, &x.CanAccessMainOffice, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom, &x.InvitationPlan, &x.InvitationPlanFrom, &x.NextInvitationPlan, &x.NextInvitationPlanFrom, &x.MainOfficeInvitationPlan, &x.MainOfficeInvitationPlanFrom, &x.NextMainOfficeInvitationPlan, &x.NextMainOfficeInvitationPlanFrom); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -149,6 +210,10 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 	if c.Role != "superadmin" {
 		in.Role = "employee"
 	}
+	if in.Role == "employee" && !in.CanAccessRP && !in.CanAccessMainOffice {
+		in.CanAccessRP = true
+		in.CanAccessMainOffice = true
+	}
 	if msg := validateUserInput(in, true); msg != "" {
 		problem(w, 422, msg)
 		return
@@ -174,6 +239,12 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		problem(w, 409, "Такой логин уже используется")
 		return
+	}
+	if in.Role == "employee" {
+		if err = setUserReportPermissions(r.Context(), tx, userID, in.CanAccessRP, in.CanAccessMainOffice); err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	if in.Role == "employee" && in.Plan > 0 {
 		if _, err = tx.Exec(r.Context(), `INSERT INTO employee_efficiency_plans(user_id,plan_count,effective_from) VALUES($1,$2,$3)`, userID, in.Plan, in.PlanFrom); err != nil {

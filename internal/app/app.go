@@ -89,6 +89,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/users", a.users)
 	m.HandleFunc("POST /api/users", a.createUser)
 	m.HandleFunc("PUT /api/users/{id}", a.updateUser)
+	m.HandleFunc("PUT /api/users/{id}/permissions", a.updateUserPermissions)
 	m.HandleFunc("POST /api/users/{id}/plans", a.createUserPlan)
 	m.HandleFunc("DELETE /api/users/{id}/plans/{date}", a.deleteFutureUserPlan)
 	m.HandleFunc("POST /api/users/{id}/main-office-plans", a.createMainOfficeUserPlan)
@@ -319,6 +320,10 @@ func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	claims := claimsFrom(ctx)
+	if !isManager(claims) && !a.hasPermission(ctx, claims.UserID, "reports.rp.view") {
+		problem(w, http.StatusForbidden, "Доступ к отчётам РП закрыт")
+		return
+	}
 	if isManager(claims) {
 		if shouldSyncDebtster {
 			var err error

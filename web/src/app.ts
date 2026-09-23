@@ -501,7 +501,10 @@ async function correctionRequestsPage(){
   if(!head)return;
   head.insertAdjacentHTML('afterbegin','<div class="request-page-tabs" role="tablist"><button class="is-active" data-request-view="employee">Запросы сотрудников</button><button data-request-view="trainee">Корректировки стажёров <b></b></button></div>');
   const traineeTab=head.querySelector<HTMLButtonElement>('[data-request-view="trainee"]')!;
-  traineeTab.querySelector('b')!.textContent=String(traineeRequests.filter(request=>request.status==='pending').length);
+  const pendingTraineeCount=traineeRequests.filter(request=>request.status==='pending').length;
+  const traineeBadge=traineeTab.querySelector('b')!;
+  traineeBadge.textContent=String(pendingTraineeCount);
+  traineeBadge.hidden=pendingTraineeCount===0;
   const title=head.querySelector<HTMLElement>('.correction-admin-title')!;
   const stats=head.querySelector<HTMLElement>('.correction-admin-head .correction-stats')!;
   const employeeTitle=title.innerHTML,employeeStats=stats.innerHTML;

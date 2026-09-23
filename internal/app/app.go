@@ -28,6 +28,10 @@ type Config struct {
 	SuperLogin             string
 	SuperPass              string
 	DebtsterIntegrationKey string
+	OpenAIAPIKey           string
+	OpenAIModel            string
+	OpenAIAPIBaseURL       string
+	OpenAITimeoutSeconds   int
 }
 
 type App struct {
@@ -39,6 +43,10 @@ type App struct {
 	secret                 []byte
 	progress               *progressHub
 	reports                *reportHub
+	openAIAPIKey           string
+	openAIModel            string
+	openAIAPIBaseURL       string
+	openAITimeoutSeconds   int
 }
 
 type progressHub struct {
@@ -59,7 +67,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer db.Close()
 
-	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), openAIAPIKey: cfg.OpenAIAPIKey, openAIModel: cfg.OpenAIModel, openAIAPIBaseURL: strings.TrimRight(cfg.OpenAIAPIBaseURL, "/"), openAITimeoutSeconds: cfg.OpenAITimeoutSeconds, progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
 	a.httpClient = newDebtsterClient(cfg.DebtsterKey, cfg.DebtsterMock)
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
@@ -103,6 +111,8 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("GET /api/whatsapp-candidates", a.whatsappCandidateList)
 	m.HandleFunc("GET /api/whatsapp-candidates/{id}", a.whatsappCandidateDetail)
 	m.HandleFunc("POST /api/whatsapp-candidates/{id}/answer", a.whatsappCandidateAnswer)
+	m.HandleFunc("PUT /api/whatsapp-candidates/{id}/answers/{questionId}", a.updateWhatsAppCandidateAnswer)
+	m.HandleFunc("PUT /api/whatsapp-candidates/{id}", a.updateWhatsAppCandidate)
 	m.HandleFunc("GET /webhooks/whatsapp", a.whatsappWebhook)
 	m.HandleFunc("POST /webhooks/whatsapp", a.whatsappWebhook)
 	m.HandleFunc("GET /webhooks/whatsapp/", a.whatsappWebhook)

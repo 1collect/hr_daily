@@ -257,7 +257,7 @@ func normalizeWhatsAppAnswer(kind, value string) (string, error) {
 func advanceWhatsAppCandidate(ctx context.Context, tx pgx.Tx, candidateID, mode string) error {
 	var nextID, nextText string
 	var nextType string
-	err := tx.QueryRow(ctx, `SELECT q.id,q.text,q.answer_type FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) ORDER BY q.position LIMIT 1`, candidateID).Scan(&nextID, &nextText, &nextType)
+	err := tx.QueryRow(ctx, `SELECT q.id,q.text,q.answer_type FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position LIMIT 1`, candidateID).Scan(&nextID, &nextText, &nextType)
 	if err == pgx.ErrNoRows {
 		_, err = tx.Exec(ctx, `UPDATE whatsapp_candidates SET status='survey_completed',current_question_id=NULL,survey_completed_at=now(),updated_at=now() WHERE id=$1`, candidateID)
 		return err
@@ -362,7 +362,7 @@ func whatsappMessageText(m map[string]any) string {
 }
 func validWhatsAppSignature(body []byte, header, secret string) bool {
 	if secret == "" || !strings.HasPrefix(header, "sha256=") {
-		return secret == ""
+		return false
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
@@ -410,7 +410,81 @@ func (a *App) handleWhatsAppIncoming(ctx context.Context, cfgID, mode, token, ph
 		}
 		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Здравствуйте! Для рассмотрения вашей кандидатуры, пожалуйста, ответьте на несколько вопросов:\n\n1. Ваше полное ФИО?\n2. Сколько Вам лет?\n3. Учитесь ли Вы сейчас?\n4. Имеется ли у Вас судимость?\n5. Имеется ли арест или ограничение на банковских счетах?\n6. Ваше последнее место работы?")
 	}
-	return a.processWhatsAppText(ctx, candidateID, mode, token, phoneNumber, sender, text, current)
+	return a.processWhatsAppTextAI(ctx, candidateID, mode, token, phoneNumber, sender, text, current)
+}
+
+func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text, current string) error {
+	rows, err := a.db.Query(ctx, `SELECT q.id,q.text,q.answer_type,q.position,q.key FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position`, candidateID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	questions := []whatsappQuestion{}
+	for rows.Next() {
+		var q whatsappQuestion
+		if err = rows.Scan(&q.ID, &q.Text, &q.Type, &q.Position, &q.Key); err != nil {
+			return err
+		}
+		questions = append(questions, q)
+	}
+	if len(questions) == 0 {
+		return nil
+	}
+	previous := ""
+	_ = a.db.QueryRow(ctx, `SELECT text FROM whatsapp_messages WHERE candidate_id=$1 AND direction='outgoing' ORDER BY sent_at DESC,id DESC LIMIT 1`, candidateID).Scan(&previous)
+	extracted, err := a.extractWhatsAppAnswers(ctx, text, previous, questions)
+	if err != nil {
+		return nil
+	}
+	valid := map[string]whatsappQuestion{}
+	for _, q := range questions {
+		valid[q.ID] = q
+	}
+	saved := 0
+	for _, item := range extracted {
+		q, ok := valid[item.QuestionID]
+		if !ok {
+			continue
+		}
+		normalized, nerr := normalizeWhatsAppAnswer(q.Type, item.Answer)
+		if nerr != nil {
+			continue
+		}
+		if _, err = a.db.Exec(ctx, `INSERT INTO whatsapp_answers(candidate_id,question_id,text) VALUES($1,$2,$3) ON CONFLICT(candidate_id,question_id) DO UPDATE SET text=EXCLUDED.text,answered_at=now()`, candidateID, q.ID, normalized); err != nil {
+			return err
+		}
+		saved++
+	}
+	if saved == 0 {
+		return nil
+	}
+	if reason, err := a.whatsappRejectionReason(ctx, candidateID); err != nil {
+		return err
+	} else if reason != "" {
+		_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='rejected',current_question_id=NULL,survey_completed_at=NULL,updated_at=now() WHERE id=$1`, candidateID)
+		if err != nil {
+			return err
+		}
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы. К сожалению, анкета не может быть продолжена.")
+	}
+	var nextID, nextText string
+	err = a.db.QueryRow(ctx, `SELECT q.id,q.text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position LIMIT 1`, candidateID).Scan(&nextID, &nextText)
+	if err == pgx.ErrNoRows {
+		_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='survey_completed',current_question_id=NULL,survey_completed_at=now(),updated_at=now() WHERE id=$1`, candidateID)
+		if err != nil {
+			return err
+		}
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо! Анкета заполнена.")
+	}
+	if err != nil {
+		return err
+	}
+	_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET current_question_id=$2,status='survey_in_progress',updated_at=now() WHERE id=$1`, candidateID, nextID)
+	if err != nil {
+		return err
+	}
+	_ = current
+	return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, nextText)
 }
 
 func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text, current string) error {
@@ -434,8 +508,16 @@ func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token,
 	if _, err = a.db.Exec(ctx, `INSERT INTO whatsapp_answers(candidate_id,question_id,text) VALUES($1,$2,$3) ON CONFLICT(candidate_id,question_id) DO UPDATE SET text=EXCLUDED.text,answered_at=now()`, candidateID, qid, normalized); err != nil {
 		return err
 	}
+	if reason, err := a.whatsappRejectionReason(ctx, candidateID); err != nil {
+		return err
+	} else if reason != "" {
+		if _, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='rejected',current_question_id=NULL,survey_completed_at=NULL,updated_at=now() WHERE id=$1`, candidateID); err != nil {
+			return err
+		}
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы. К сожалению, анкета не может быть продолжена.")
+	}
 	var nextID, nextText string
-	if err = a.db.QueryRow(ctx, `SELECT id,text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) ORDER BY position LIMIT 1`, candidateID).Scan(&nextID, &nextText); err == pgx.ErrNoRows {
+	if err = a.db.QueryRow(ctx, `SELECT id,text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY position LIMIT 1`, candidateID).Scan(&nextID, &nextText); err == pgx.ErrNoRows {
 		_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='survey_completed',current_question_id=NULL,survey_completed_at=now(),updated_at=now() WHERE id=$1`, candidateID)
 		if err != nil {
 			return err
@@ -449,6 +531,32 @@ func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token,
 		return err
 	}
 	return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, nextText)
+}
+
+func (a *App) whatsappRejectionReason(ctx context.Context, candidateID string) (string, error) {
+	answers := map[string]string{}
+	rows, err := a.db.Query(ctx, `SELECT q.key,a.text FROM whatsapp_answers a JOIN whatsapp_questions q ON q.id=a.question_id WHERE a.candidate_id=$1`, candidateID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err = rows.Scan(&key, &value); err != nil {
+			return "", err
+		}
+		answers[key] = value
+	}
+	if age, err := strconv.Atoi(answers["age"]); err == nil && age < 18 {
+		return "underage", nil
+	}
+	if answers["criminal_record"] == "Да" || answers["bank_restrictions"] == "Да" {
+		return "screening", nil
+	}
+	if answers["studying"] == "Да" && answers["is_final_year"] == "Нет" {
+		return "not_final_year", nil
+	}
+	return "", rows.Err()
 }
 
 func (a *App) sendWhatsApp(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text string) error {
@@ -476,4 +584,82 @@ func (a *App) sendWhatsApp(ctx context.Context, candidateID, mode, token, phoneN
 	}
 	_, err := a.db.Exec(ctx, `INSERT INTO whatsapp_messages(candidate_id,direction,text,transport,metadata) VALUES($1,'outgoing',$2,$3,$4)`, candidateID, text, mode, metadata)
 	return err
+}
+
+func (a *App) updateWhatsAppCandidateAnswer(w http.ResponseWriter, r *http.Request) {
+	c, ok := a.requireWhatsAppCandidateAccess(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Answer string `json:"answer"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	in.Answer = strings.TrimSpace(in.Answer)
+	ctx := r.Context()
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var candidateID, kind string
+	err = tx.QueryRow(ctx, `SELECT c.id,q.answer_type FROM whatsapp_candidates c JOIN whatsapp_waba_configs w ON w.id=c.config_id JOIN whatsapp_answers a ON a.candidate_id=c.id JOIN whatsapp_questions q ON q.id=a.question_id WHERE c.id=$1 AND q.id=$2 AND ($3::text='' OR w.employee_id=$3::uuid) FOR UPDATE`, r.PathValue("id"), r.PathValue("questionId"), c.EmployeeID).Scan(&candidateID, &kind)
+	if err == pgx.ErrNoRows {
+		problem(w, 404, "Ответ не найден")
+		return
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	normalized, err := normalizeWhatsAppAnswer(kind, in.Answer)
+	if err != nil {
+		problem(w, 422, err.Error())
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE whatsapp_answers SET text=$3,answered_at=now() WHERE candidate_id=$1 AND question_id=$2`, candidateID, r.PathValue("questionId"), normalized); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE whatsapp_candidates SET current_question_id=(SELECT q.id FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position LIMIT 1),status=CASE WHEN EXISTS(SELECT 1 FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer))) THEN 'survey_in_progress' ELSE 'survey_completed' END,updated_at=now() WHERE id=$1`, candidateID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonOut(w, 200, map[string]bool{"ok": true})
+}
+
+func (a *App) updateWhatsAppCandidate(w http.ResponseWriter, r *http.Request) {
+	c, ok := a.requireWhatsAppCandidateAccess(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Status      string `json:"status"`
+		DisplayName string `json:"displayName"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	valid := map[string]bool{"new": true, "survey_in_progress": true, "survey_completed": true, "contacted": true, "rejected": true, "hired": true}
+	if in.Status != "" && !valid[in.Status] {
+		problem(w, 422, "Недопустимый статус кандидата")
+		return
+	}
+	result, err := a.db.Exec(r.Context(), `UPDATE whatsapp_candidates c SET status=CASE WHEN $2='' THEN c.status ELSE $2 END,display_name=CASE WHEN $3='' THEN c.display_name ELSE $3 END,updated_at=now() FROM whatsapp_waba_configs w WHERE c.config_id=w.id AND c.id=$1 AND ($4::text='' OR w.employee_id=$4::uuid)`, r.PathValue("id"), in.Status, strings.TrimSpace(in.DisplayName), c.EmployeeID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		problem(w, 404, "Кандидат не найден")
+		return
+	}
+	jsonOut(w, 200, map[string]bool{"ok": true})
 }

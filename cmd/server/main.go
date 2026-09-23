@@ -62,6 +62,10 @@ func main() {
 		SuperLogin:             require("SUPERADMIN_LOGIN"),
 		SuperPass:              require("SUPERADMIN_PASSWORD"),
 		DebtsterIntegrationKey: getenv("DEBTSTER_INTEGRATION_KEY", ""),
+		OpenAIAPIKey:           getenv("OPENAI_API_KEY", ""),
+		OpenAIModel:            getenv("OPENAI_MODEL", "gpt-5-nano"),
+		OpenAIAPIBaseURL:       getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1"),
+		OpenAITimeoutSeconds:   getenvInt("OPENAI_TIMEOUT_SECONDS", 30),
 	}
 	if err := app.Run(ctx, cfg); err != nil {
 		log.Fatal(err)
@@ -110,4 +114,16 @@ func getenv(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getenvInt(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		log.Fatalf("%s must be a positive integer", name)
+	}
+	return parsed
 }

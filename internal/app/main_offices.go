@@ -249,13 +249,13 @@ func (a *App) loadMainOfficeRows(ctx context.Context, reportID, date string) ([]
 		return nil, err
 	}
 	for index := range rows {
-		hired, queryErr := a.db.Query(ctx, `SELECT full_name,position FROM main_office_hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, rows[index].ID)
+		hired, queryErr := a.db.Query(ctx, `SELECT full_name,position,COALESCE(hired_at::text,'') FROM main_office_hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, rows[index].ID)
 		if queryErr != nil {
 			return nil, queryErr
 		}
 		for hired.Next() {
 			var worker hiredWorker
-			if err = hired.Scan(&worker.FullName, &worker.Position); err != nil {
+			if err = hired.Scan(&worker.FullName, &worker.Position, &worker.HiredAt); err != nil {
 				hired.Close()
 				return nil, err
 			}
@@ -464,7 +464,7 @@ func (a *App) updateMainOfficeRow(w http.ResponseWriter, r *http.Request) {
 	_, _ = tx.Exec(ctx, `DELETE FROM main_office_hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
 	cleanHires := cleanHiredWorkers(input.HiredWorkers)
 	for _, worker := range cleanHires {
-		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO main_office_hired_workers(report_row_id,full_name,position,hired_at) VALUES($1,$2,$3,NULLIF($4,'')::date)`, r.PathValue("id"), worker.FullName, worker.Position, worker.HiredAt); err != nil {
 			serverError(w, err)
 			return
 		}

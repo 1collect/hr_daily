@@ -247,6 +247,7 @@ type hiredDetail struct {
 type hiredWorker struct {
 	FullName string `json:"fullName"`
 	Position string `json:"position"`
+	HiredAt  string `json:"hiredAt"`
 }
 
 type cellContribution struct {
@@ -599,13 +600,13 @@ func (a *App) loadRows(ctx context.Context, reportID string) ([]reportRow, error
 		out = append(out, x)
 	}
 	for i := range out {
-		hr, err := a.db.Query(ctx, `SELECT full_name,position FROM hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, out[i].ID)
+		hr, err := a.db.Query(ctx, `SELECT full_name,position,COALESCE(hired_at::text,'') FROM hired_workers WHERE report_row_id=$1 ORDER BY created_at,id`, out[i].ID)
 		if err != nil {
 			return nil, err
 		}
 		for hr.Next() {
 			var worker hiredWorker
-			_ = hr.Scan(&worker.FullName, &worker.Position)
+			_ = hr.Scan(&worker.FullName, &worker.Position, &worker.HiredAt)
 			out[i].HiredWorkers = append(out[i].HiredWorkers, worker)
 		}
 		hr.Close()
@@ -716,7 +717,7 @@ func (a *App) updateRow(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = tx.Exec(ctx, `DELETE FROM hired_workers WHERE report_row_id=$1`, r.PathValue("id"))
 	for _, worker := range cleanHires {
-		if _, err = tx.Exec(ctx, `INSERT INTO hired_workers(report_row_id,full_name,position) VALUES($1,$2,$3)`, r.PathValue("id"), worker.FullName, worker.Position); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO hired_workers(report_row_id,full_name,position,hired_at) VALUES($1,$2,$3,NULLIF($4,'')::date)`, r.PathValue("id"), worker.FullName, worker.Position, worker.HiredAt); err != nil {
 			serverError(w, err)
 			return
 		}

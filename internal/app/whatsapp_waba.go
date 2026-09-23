@@ -13,10 +13,11 @@ type whatsappWABAConfig struct {
 	DisplayName   string `json:"displayName"`
 	WABAID        string `json:"wabaId"`
 	PhoneNumberID string `json:"phoneNumberId"`
-	AccessToken   string `json:"accessToken"`
-	VerifyToken   string `json:"verifyToken"`
-	AppSecret     string `json:"appSecret"`
+	AccessToken   string `json:"-"`
+	VerifyToken   string `json:"-"`
+	AppSecret     string `json:"-"`
 	Active        bool   `json:"active"`
+	TransportMode string `json:"transportMode"`
 }
 
 func (a *App) whatsappWABAConfigs(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +26,7 @@ func (a *App) whatsappWABAConfigs(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.db.Query(r.Context(), `SELECT c.id,c.employee_id,
 		trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),c.phone_number,c.display_name,
-		c.waba_id,c.phone_number_id,c.access_token,c.verify_token,c.app_secret,c.active
+		c.waba_id,c.phone_number_id,c.access_token,c.verify_token,c.app_secret,c.active,c.transport_mode
 		FROM whatsapp_waba_configs c JOIN employees e ON e.id=c.employee_id
 		ORDER BY e.last_name,e.first_name,e.middle_name,c.phone_number`)
 	if err != nil {
@@ -37,7 +38,7 @@ func (a *App) whatsappWABAConfigs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item whatsappWABAConfig
 		if err = rows.Scan(&item.ID, &item.EmployeeID, &item.EmployeeName, &item.PhoneNumber, &item.DisplayName,
-			&item.WABAID, &item.PhoneNumberID, &item.AccessToken, &item.VerifyToken, &item.AppSecret, &item.Active); err != nil {
+			&item.WABAID, &item.PhoneNumberID, &item.AccessToken, &item.VerifyToken, &item.AppSecret, &item.Active, &item.TransportMode); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -59,6 +60,10 @@ func validateWhatsAppWABAConfig(in *whatsappWABAConfig) string {
 	in.AccessToken = strings.TrimSpace(in.AccessToken)
 	in.VerifyToken = strings.TrimSpace(in.VerifyToken)
 	in.AppSecret = strings.TrimSpace(in.AppSecret)
+	in.TransportMode = strings.TrimSpace(in.TransportMode)
+	if in.TransportMode == "" {
+		in.TransportMode = "whatsapp"
+	}
 	if in.EmployeeID == "" {
 		return "Выберите сотрудника"
 	}
@@ -67,6 +72,9 @@ func validateWhatsAppWABAConfig(in *whatsappWABAConfig) string {
 	}
 	if in.WABAID == "" || in.PhoneNumberID == "" {
 		return "Укажите WABA ID и Phone Number ID"
+	}
+	if in.TransportMode != "terminal" && in.TransportMode != "whatsapp" && in.TransportMode != "whatsapp_test" {
+		return "Недопустимый режим WhatsApp"
 	}
 	return ""
 }
@@ -85,11 +93,11 @@ func (a *App) createWhatsAppWABAConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	var item whatsappWABAConfig
 	err := a.db.QueryRow(r.Context(), `INSERT INTO whatsapp_waba_configs
-		(employee_id,phone_number,display_name,waba_id,phone_number_id,access_token,verify_token,app_secret,active)
-		SELECT e.id,$2,$3,$4,$5,$6,$7,$8,$9 FROM employees e WHERE e.id=$1 AND e.active
-		RETURNING id,employee_id,phone_number,display_name,waba_id,phone_number_id,access_token,verify_token,app_secret,active`,
-		in.EmployeeID, in.PhoneNumber, in.DisplayName, in.WABAID, in.PhoneNumberID, in.AccessToken, in.VerifyToken, in.AppSecret, in.Active).
-		Scan(&item.ID, &item.EmployeeID, &item.PhoneNumber, &item.DisplayName, &item.WABAID, &item.PhoneNumberID, &item.AccessToken, &item.VerifyToken, &item.AppSecret, &item.Active)
+		(employee_id,phone_number,display_name,waba_id,phone_number_id,access_token,verify_token,app_secret,active,transport_mode)
+		SELECT e.id,$2,$3,$4,$5,$6,$7,$8,$9,$10 FROM employees e WHERE e.id=$1 AND e.active
+		RETURNING id,employee_id,phone_number,display_name,waba_id,phone_number_id,access_token,verify_token,app_secret,active,transport_mode`,
+		in.EmployeeID, in.PhoneNumber, in.DisplayName, in.WABAID, in.PhoneNumberID, in.AccessToken, in.VerifyToken, in.AppSecret, in.Active, in.TransportMode).
+		Scan(&item.ID, &item.EmployeeID, &item.PhoneNumber, &item.DisplayName, &item.WABAID, &item.PhoneNumberID, &item.AccessToken, &item.VerifyToken, &item.AppSecret, &item.Active, &item.TransportMode)
 	if err != nil {
 		if strings.Contains(err.Error(), "whatsapp_waba_configs_employee_id_key") {
 			problem(w, http.StatusConflict, "У этого сотрудника уже настроен WhatsApp номер")
@@ -119,11 +127,11 @@ func (a *App) updateWhatsAppWABAConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	var item whatsappWABAConfig
 	err := a.db.QueryRow(r.Context(), `UPDATE whatsapp_waba_configs c SET employee_id=$2,phone_number=$3,display_name=$4,
-		waba_id=$5,phone_number_id=$6,access_token=$7,verify_token=$8,app_secret=$9,active=$10,updated_at=now()
+		waba_id=$5,phone_number_id=$6,access_token=CASE WHEN $7<>'' THEN $7 ELSE c.access_token END,verify_token=CASE WHEN $8<>'' THEN $8 ELSE c.verify_token END,app_secret=CASE WHEN $9<>'' THEN $9 ELSE c.app_secret END,active=$10,transport_mode=$11,updated_at=now()
 		FROM employees e WHERE c.id=$1 AND e.id=$2 AND e.active
-		RETURNING c.id,c.employee_id,c.phone_number,c.display_name,c.waba_id,c.phone_number_id,c.access_token,c.verify_token,c.app_secret,c.active`,
-		r.PathValue("id"), in.EmployeeID, in.PhoneNumber, in.DisplayName, in.WABAID, in.PhoneNumberID, in.AccessToken, in.VerifyToken, in.AppSecret, in.Active).
-		Scan(&item.ID, &item.EmployeeID, &item.PhoneNumber, &item.DisplayName, &item.WABAID, &item.PhoneNumberID, &item.AccessToken, &item.VerifyToken, &item.AppSecret, &item.Active)
+		RETURNING c.id,c.employee_id,c.phone_number,c.display_name,c.waba_id,c.phone_number_id,c.access_token,c.verify_token,c.app_secret,c.active,c.transport_mode`,
+		r.PathValue("id"), in.EmployeeID, in.PhoneNumber, in.DisplayName, in.WABAID, in.PhoneNumberID, in.AccessToken, in.VerifyToken, in.AppSecret, in.Active, in.TransportMode).
+		Scan(&item.ID, &item.EmployeeID, &item.PhoneNumber, &item.DisplayName, &item.WABAID, &item.PhoneNumberID, &item.AccessToken, &item.VerifyToken, &item.AppSecret, &item.Active, &item.TransportMode)
 	if err != nil {
 		if strings.Contains(err.Error(), "whatsapp_waba_configs_employee_id_key") {
 			problem(w, http.StatusConflict, "У этого сотрудника уже настроен WhatsApp номер")

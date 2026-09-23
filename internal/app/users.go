@@ -20,6 +20,7 @@ type userRecord struct {
 	Active                           bool   `json:"active"`
 	CanAccessRP                      bool   `json:"canAccessRP"`
 	CanAccessMainOffice              bool   `json:"canAccessMainOffice"`
+	CanAccessWhatsAppCandidates      bool   `json:"canAccessWhatsAppCandidates"`
 	Plan                             int    `json:"plan"`
 	PlanFrom                         string `json:"planFrom"`
 	NextPlan                         int    `json:"nextPlan"`
@@ -57,7 +58,7 @@ type userInput struct {
 }
 
 func setUserReportPermissions(ctx context.Context, tx pgx.Tx, userID string, rp, mainOffice bool) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM permission_user WHERE user_id=$1`, userID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM permission_user pu USING permissions p WHERE pu.permission_id=p.id AND pu.user_id=$1 AND p.code IN ('reports.rp.view','reports.main_office.view')`, userID); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO permission_user(permission_id,user_id)
@@ -72,8 +73,9 @@ func (a *App) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		CanAccessRP         bool `json:"canAccessRP"`
-		CanAccessMainOffice bool `json:"canAccessMainOffice"`
+		CanAccessRP                 bool `json:"canAccessRP"`
+		CanAccessMainOffice         bool `json:"canAccessMainOffice"`
+		CanAccessWhatsAppCandidates bool `json:"canAccessWhatsAppCandidates"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -102,6 +104,15 @@ func (a *App) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	if in.CanAccessWhatsAppCandidates {
+		_, err = tx.Exec(ctx, `INSERT INTO permission_user(permission_id,user_id) SELECT id,$1 FROM permissions WHERE code='candidates.whatsapp.view' ON CONFLICT DO NOTHING`, r.PathValue("id"))
+	} else {
+		_, err = tx.Exec(ctx, `DELETE FROM permission_user pu USING permissions p WHERE pu.permission_id=p.id AND pu.user_id=$1 AND p.code='candidates.whatsapp.view'`, r.PathValue("id"))
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	if err = tx.Commit(ctx); err != nil {
 		serverError(w, err)
 		return
@@ -122,7 +133,8 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	}
 	q, err := a.db.Query(r.Context(), `SELECT u.id,e.id,u.username,u.role,e.first_name,e.last_name,e.middle_name,u.active,
 		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.rp.view'),
-		EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.main_office.view'),
+			EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='reports.main_office.view'),
+			EXISTS(SELECT 1 FROM permission_user pu JOIN permissions p ON p.id=pu.permission_id WHERE pu.user_id=u.id AND p.code='candidates.whatsapp.view'),
 		COALESCE(p.plan_count,0),COALESCE(p.effective_from::text,''),COALESCE(np.plan_count,0),COALESCE(np.effective_from::text,''),
 		COALESCE(mp.plan_count,0),COALESCE(mp.effective_from::text,''),COALESCE(nmp.plan_count,0),COALESCE(nmp.effective_from::text,'')
 		,COALESCE(ip.plan_count,0),COALESCE(ip.effective_from::text,''),COALESCE(nip.plan_count,0),COALESCE(nip.effective_from::text,'')
@@ -146,7 +158,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request) {
 	out := []userRecord{}
 	for q.Next() {
 		var x userRecord
-		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.CanAccessRP, &x.CanAccessMainOffice, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom, &x.InvitationPlan, &x.InvitationPlanFrom, &x.NextInvitationPlan, &x.NextInvitationPlanFrom, &x.MainOfficeInvitationPlan, &x.MainOfficeInvitationPlanFrom, &x.NextMainOfficeInvitationPlan, &x.NextMainOfficeInvitationPlanFrom); err != nil {
+		if err = q.Scan(&x.ID, &x.EmployeeID, &x.Username, &x.Role, &x.FirstName, &x.LastName, &x.MiddleName, &x.Active, &x.CanAccessRP, &x.CanAccessMainOffice, &x.CanAccessWhatsAppCandidates, &x.Plan, &x.PlanFrom, &x.NextPlan, &x.NextPlanFrom, &x.MainOfficePlan, &x.MainOfficePlanFrom, &x.NextMainOfficePlan, &x.NextMainOfficePlanFrom, &x.InvitationPlan, &x.InvitationPlanFrom, &x.NextInvitationPlan, &x.NextInvitationPlanFrom, &x.MainOfficeInvitationPlan, &x.MainOfficeInvitationPlanFrom, &x.NextMainOfficeInvitationPlan, &x.NextMainOfficeInvitationPlanFrom); err != nil {
 			serverError(w, err)
 			return
 		}

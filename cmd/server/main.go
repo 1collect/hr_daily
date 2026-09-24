@@ -82,6 +82,7 @@ func whatsappMode() string {
 		return "whatsapp_test"
 	default:
 		log.Fatal("WHATSAPP_MODE must be production or test")
+		return ""
 	}
 }
 

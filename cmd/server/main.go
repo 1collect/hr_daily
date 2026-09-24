@@ -66,6 +66,7 @@ func main() {
 		OpenAIModel:            getenv("OPENAI_MODEL", "gpt-5-nano"),
 		OpenAIAPIBaseURL:       getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1"),
 		OpenAITimeoutSeconds:   getenvInt("OPENAI_TIMEOUT_SECONDS", 30),
+		WhatsAppTestReply:      getenvBool("WHATSAPP_TEST_REPLY", false),
 	}
 	if err := app.Run(ctx, cfg); err != nil {
 		log.Fatal(err)
@@ -124,6 +125,18 @@ func getenvInt(name string, fallback int) int {
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed < 1 {
 		log.Fatalf("%s must be a positive integer", name)
+	}
+	return parsed
+}
+
+func getenvBool(name string, fallback bool) bool {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		log.Fatalf("%s must be true or false", name)
 	}
 	return parsed
 }

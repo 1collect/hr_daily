@@ -468,7 +468,7 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы. К сожалению, анкета не может быть продолжена.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "К сожалению, ваша кандидатура нам не подходит.")
 	}
 	var nextID, nextText string
 	err = a.db.QueryRow(ctx, `SELECT q.id,q.text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position LIMIT 1`, candidateID).Scan(&nextID, &nextText)
@@ -477,7 +477,7 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо! Анкета заполнена.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "С вами свяжутся наши менеджеры в ближайшее время.")
 	}
 	if err != nil {
 		return err
@@ -517,7 +517,7 @@ func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token,
 		if _, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='rejected',current_question_id=NULL,survey_completed_at=NULL,updated_at=now() WHERE id=$1`, candidateID); err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы. К сожалению, анкета не может быть продолжена.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "К сожалению, ваша кандидатура нам не подходит.")
 	}
 	var nextID, nextText string
 	if err = a.db.QueryRow(ctx, `SELECT id,text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY position LIMIT 1`, candidateID).Scan(&nextID, &nextText); err == pgx.ErrNoRows {
@@ -525,7 +525,7 @@ func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token,
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо! Анкета заполнена.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "С вами свяжутся наши менеджеры в ближайшее время.")
 	} else if err != nil {
 		return err
 	}

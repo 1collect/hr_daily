@@ -166,6 +166,27 @@ func (a *App) whatsappCandidateDetail(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, http.StatusOK, map[string]any{"candidate": item, "questions": questions, "answers": answers, "messages": msgs})
 }
 
+func (a *App) deleteWhatsAppCandidate(w http.ResponseWriter, r *http.Request) {
+	c, ok := a.requireWhatsAppCandidateAccess(w, r)
+	if !ok {
+		return
+	}
+	result, err := a.db.Exec(r.Context(), `
+		DELETE FROM whatsapp_candidates c
+		USING whatsapp_waba_configs w
+		WHERE c.config_id=w.id AND c.id=$1
+		  AND ($2::text='' OR w.employee_id=$2::uuid)`, r.PathValue("id"), c.EmployeeID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		problem(w, http.StatusNotFound, "Кандидат не найден")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *App) whatsappCandidateAnswer(w http.ResponseWriter, r *http.Request) {
 	c, ok := a.requireWhatsAppCandidateAccess(w, r)
 	if !ok {

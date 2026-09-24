@@ -113,6 +113,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("DELETE /api/whatsapp-waba/{id}", a.deleteWhatsAppWABAConfig)
 	m.HandleFunc("GET /api/whatsapp-candidates", a.whatsappCandidateList)
 	m.HandleFunc("GET /api/whatsapp-candidates/{id}", a.whatsappCandidateDetail)
+	m.HandleFunc("DELETE /api/whatsapp-candidates/{id}", a.deleteWhatsAppCandidate)
 	m.HandleFunc("POST /api/whatsapp-candidates/{id}/answer", a.whatsappCandidateAnswer)
 	m.HandleFunc("PUT /api/whatsapp-candidates/{id}/answers/{questionId}", a.updateWhatsAppCandidateAnswer)
 	m.HandleFunc("PUT /api/whatsapp-candidates/{id}", a.updateWhatsAppCandidate)

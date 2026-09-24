@@ -311,7 +311,7 @@ func (a *App) whatsappWebhook(w http.ResponseWriter, r *http.Request) {
 			metadata, _ := value["metadata"].(map[string]any)
 			phoneID, _ := metadata["phone_number_id"].(string)
 			var cfgID, mode, token, secret, phoneNumberID string
-			if err := a.db.QueryRow(r.Context(), `SELECT id,transport_mode,access_token,app_secret,phone_number_id FROM whatsapp_waba_configs WHERE phone_number_id=$1 AND active`, phoneID).Scan(&cfgID, &mode, &token, &secret, &phoneNumberID); err != nil {
+			if err := a.db.QueryRow(r.Context(), `SELECT id,$2,access_token,app_secret,phone_number_id FROM whatsapp_waba_configs WHERE phone_number_id=$1 AND active`, phoneID, a.whatsappMode).Scan(&cfgID, &mode, &token, &secret, &phoneNumberID); err != nil {
 				continue
 			}
 			if !validWhatsAppSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
@@ -563,9 +563,6 @@ func (a *App) whatsappRejectionReason(ctx context.Context, candidateID string) (
 }
 
 func (a *App) sendWhatsApp(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text string) error {
-	if mode == "terminal" {
-		return nil
-	}
 	metadata := map[string]any{}
 	if token != "" {
 		payload := map[string]any{"messaging_product": "whatsapp", "to": sender, "type": "text", "text": map[string]any{"preview_url": false, "body": text}}

@@ -66,10 +66,19 @@ func main() {
 		OpenAIModel:            getenv("OPENAI_MODEL", "gpt-5-nano"),
 		OpenAIAPIBaseURL:       getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1"),
 		OpenAITimeoutSeconds:   getenvInt("OPENAI_TIMEOUT_SECONDS", 30),
+		WhatsAppMode:           whatsappMode(),
 	}
 	if err := app.Run(ctx, cfg); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func whatsappMode() string {
+	mode := getenv("WHATSAPP_MODE", "whatsapp")
+	if mode != "whatsapp" && mode != "whatsapp_test" {
+		log.Fatal("WHATSAPP_MODE must be whatsapp or whatsapp_test")
+	}
+	return mode
 }
 
 func debtsterMock() bool {

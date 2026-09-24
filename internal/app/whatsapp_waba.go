@@ -86,7 +86,7 @@ func validateWhatsAppWABAConfig(in *whatsappWABAConfigInput) string {
 	if in.WABAID == "" || in.PhoneNumberID == "" {
 		return "Укажите WABA ID и Phone Number ID"
 	}
-	if in.TransportMode != "terminal" && in.TransportMode != "whatsapp" && in.TransportMode != "whatsapp_test" {
+	if in.TransportMode != "whatsapp" && in.TransportMode != "whatsapp_test" {
 		return "Недопустимый режим WhatsApp"
 	}
 	return ""

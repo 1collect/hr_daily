@@ -73,9 +73,7 @@ func (a *App) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		CanAccessRP                 bool `json:"canAccessRP"`
-		CanAccessMainOffice         bool `json:"canAccessMainOffice"`
-		CanAccessWhatsAppCandidates bool `json:"canAccessWhatsAppCandidates"`
+		Permissions []string `json:"permissions"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -100,15 +98,14 @@ func (a *App) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusUnprocessableEntity, "Права на отчёты настраиваются только для сотрудников")
 		return
 	}
-	if err = setUserReportPermissions(ctx, tx, r.PathValue("id"), in.CanAccessRP, in.CanAccessMainOffice); err != nil {
+	if _, err = tx.Exec(ctx, `DELETE FROM permission_user WHERE user_id=$1`, r.PathValue("id")); err != nil {
 		serverError(w, err)
 		return
 	}
-	if in.CanAccessWhatsAppCandidates {
-		_, err = tx.Exec(ctx, `INSERT INTO permission_user(permission_id,user_id) SELECT id,$1 FROM permissions WHERE code='candidates.whatsapp.view' ON CONFLICT DO NOTHING`, r.PathValue("id"))
-	} else {
-		_, err = tx.Exec(ctx, `DELETE FROM permission_user pu USING permissions p WHERE pu.permission_id=p.id AND pu.user_id=$1 AND p.code='candidates.whatsapp.view'`, r.PathValue("id"))
-	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO permission_user(permission_id,user_id)
+		SELECT id,$1 FROM permissions WHERE code = ANY($2::text[])
+		ON CONFLICT DO NOTHING`, r.PathValue("id"), in.Permissions)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -119,6 +116,41 @@ func (a *App) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log(ctx, "user.permissions.updated", "user", r.PathValue("id"))
 	jsonOut(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (a *App) userPermissions(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
+	rows, err := a.db.Query(r.Context(), `
+		SELECT p.code,p.name,
+		       EXISTS(SELECT 1 FROM permission_user pu WHERE pu.permission_id=p.id AND pu.user_id=$1)
+		FROM permissions p
+		ORDER BY p.name,p.code`, r.PathValue("id"))
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+	type permission struct {
+		Code    string `json:"code"`
+		Name    string `json:"name"`
+		Granted bool   `json:"granted"`
+	}
+	out := []permission{}
+	for rows.Next() {
+		var item permission
+		if err = rows.Scan(&item.Code, &item.Name, &item.Granted); err != nil {
+			serverError(w, err)
+			return
+		}
+		out = append(out, item)
+	}
+	if err = rows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonOut(w, http.StatusOK, out)
 }
 
 func (a *App) users(w http.ResponseWriter, r *http.Request) {

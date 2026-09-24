@@ -375,32 +375,33 @@ func mustDecodeHex(v string) []byte { b, _ := hex.DecodeString(v); return b }
 
 func (a *App) handleWhatsAppIncoming(ctx context.Context, cfgID, mode, token, phoneNumber, sender, display, text, messageID string) error {
 	var candidateID, status, current string
-	var restarted bool
-	err := a.db.QueryRow(ctx, `INSERT INTO whatsapp_candidates(config_id,external_id,display_name) VALUES($1,$2,$3) ON CONFLICT(config_id,external_id) DO UPDATE SET display_name=CASE WHEN EXCLUDED.display_name<>'' THEN EXCLUDED.display_name ELSE whatsapp_candidates.display_name END,updated_at=now() RETURNING id,status,COALESCE(current_question_id::text,'')`, cfgID, sender, display).Scan(&candidateID, &status, &current)
-	if err != nil {
-		return err
-	}
 	if messageID != "" {
 		var exists bool
-		_ = a.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM whatsapp_messages WHERE external_message_id=$1)`, messageID).Scan(&exists)
+		if err := a.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM whatsapp_messages WHERE external_message_id=$1)`, messageID).Scan(&exists); err != nil {
+			return err
+		}
 		if exists {
 			return nil
 		}
 	}
-	if mode == "whatsapp_test" && status == "survey_completed" {
-		_, err = a.db.Exec(ctx, `DELETE FROM whatsapp_answers WHERE candidate_id=$1; UPDATE whatsapp_candidates SET status='new',current_question_id=NULL,survey_completed_at=NULL,updated_at=now() WHERE id=$1`, candidateID)
-		if err != nil {
-			return err
-		}
-		status = "new"
-		current = ""
-		restarted = true
+	err := a.db.QueryRow(ctx, `SELECT id,status,COALESCE(current_question_id::text,'')
+		FROM whatsapp_candidates WHERE config_id=$1 AND external_id=$2
+		ORDER BY created_at DESC,id DESC LIMIT 1`, cfgID, sender).Scan(&candidateID, &status, &current)
+	if err == pgx.ErrNoRows || (err == nil && mode == "whatsapp_test" && (status == "survey_completed" || status == "rejected")) {
+		err = a.db.QueryRow(ctx, `INSERT INTO whatsapp_candidates(config_id,external_id,display_name)
+			VALUES($1,$2,$3) RETURNING id,status,COALESCE(current_question_id::text,'')`, cfgID, sender, display).Scan(&candidateID, &status, &current)
+	} else if err == nil {
+		err = a.db.QueryRow(ctx, `UPDATE whatsapp_candidates
+			SET display_name=CASE WHEN $2<>'' THEN $2 ELSE display_name END,updated_at=now()
+			WHERE id=$1 RETURNING status,COALESCE(current_question_id::text,'')`, candidateID, display).Scan(&status, &current)
+	}
+	if err != nil {
+		return err
 	}
 	_, err = a.db.Exec(ctx, `INSERT INTO whatsapp_messages(candidate_id,direction,text,transport,external_message_id) VALUES($1,'incoming',$2,$3,NULLIF($4,''))`, candidateID, text, mode, messageID)
 	if err != nil {
 		return err
 	}
-	_ = restarted
 	if status == "new" || current == "" {
 		var qid, qtext string
 		err = a.db.QueryRow(ctx, `SELECT id,text FROM whatsapp_questions q WHERE q.is_active ORDER BY position LIMIT 1`).Scan(&qid, &qtext)

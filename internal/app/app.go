@@ -79,6 +79,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.OpenAIAPIKey == "" {
 		log.Print("WhatsApp AI analysis disabled: OPENAI_API_KEY is not set")
 	}
+	go a.runWhatsAppReminderWorker(ctx)
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
 	}

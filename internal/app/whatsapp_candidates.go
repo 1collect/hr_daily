@@ -21,7 +21,7 @@ import (
 
 const whatsappCandidatePermission = "candidates.whatsapp.view"
 
-const whatsappWelcomeMessage = "Здравствуйте! Для рассмотрения вашей кандидатуры, пожалуйста, ответьте одним сообщением на вопросы ниже. Если какой-то вопрос к вам не относится, напишите «нет».\n\n1. Ваше полное ФИО?\n2. Сколько Вам лет?\n3. Учитесь ли Вы сейчас?\n4. Имеется ли у Вас судимость?\n5. Имеется ли арест или ограничение на банковских счетах?\n6. Ваше последнее место работы?"
+const whatsappWelcomeMessage = "Здравствуйте! Чтобы мы могли рассмотреть вашу кандидатуру, ответьте, пожалуйста, одним сообщением на несколько вопросов:\n\n1. Как вас зовут полностью?\n2. Сколько вам лет?\n3. Учитесь сейчас?\n4. Вы на последнем курсе?\n5. Есть ли судимость?\n6. Есть ли арест или ограничения по банковским счетам?\n7. Где вы работали в последний раз?"
 
 type whatsappCandidate struct {
 	ID               string    `json:"id"`
@@ -575,10 +575,13 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 		processed[q.ID] = true
 		saved++
 	}
-	if saved == 0 && len(analysis.Answers) == 0 {
+	if saved == 0 {
 		if first {
 			return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, whatsappWelcomeMessage)
 		}
+		// Keep collecting the conversation without interrupting for unrelated,
+		// unclear, or invalid answers. Any valid answers in the same message
+		// have already been saved above.
 		return nil
 	}
 	if reason, err := a.whatsappRejectionReason(ctx, candidateID); err != nil {
@@ -619,19 +622,16 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 	if err != nil {
 		return err
 	}
-	if validWhatsAppAIFollowUp(analysis, remaining) {
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, strings.TrimSpace(analysis.FollowUp))
+	// A single short answer may be part of a sequence, so wait until the
+	// candidate has been quiet for 30 minutes. When one message contains
+	// multiple answers, ask the AI-prepared remaining questions right away.
+	if saved >= 2 {
+		if validWhatsAppAIFollowUp(analysis, remaining) {
+			return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, strings.TrimSpace(analysis.FollowUp))
+		}
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, fallbackWhatsAppReminder(remaining))
 	}
-	var followup strings.Builder
-	if saved == 0 {
-		followup.WriteString("Не удалось распознать ответы. Пожалуйста, ответьте одним сообщением на оставшиеся вопросы:\n\n")
-	} else {
-		followup.WriteString("Спасибо! Остались вопросы — пожалуйста, ответьте на них одним сообщением:\n\n")
-	}
-	for _, q := range remaining {
-		fmt.Fprintf(&followup, "%d. %s\n", q.Position, q.Text)
-	}
-	return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, strings.TrimSpace(followup.String()))
+	return nil
 }
 
 func (a *App) whatsappRejectionReason(ctx context.Context, candidateID string) (string, error) {

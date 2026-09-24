@@ -401,9 +401,6 @@ func (a *App) handleWhatsAppIncoming(ctx context.Context, cfgID, mode, token, ph
 		return err
 	}
 	_ = restarted
-	if a.whatsappTestReply {
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Привет")
-	}
 	if status == "new" || current == "" {
 		var qid, qtext string
 		err = a.db.QueryRow(ctx, `SELECT id,text FROM whatsapp_questions q WHERE q.is_active ORDER BY position LIMIT 1`).Scan(&qid, &qtext)

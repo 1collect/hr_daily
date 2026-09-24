@@ -36,6 +36,28 @@ services:
     ports:
       - "${APP_PORT:?APP_PORT is required}:8080"
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    command: ["http", "webhook-proxy:80", "--url", "https://${NGROK_DOMAIN:?NGROK_DOMAIN is required}", "--log=stdout", "--log-format=json", "--log-level=info"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?NGROK_AUTHTOKEN is required}
+    depends_on:
+      webhook-proxy:
+        condition: service_started
+    networks: [docker_network]
+    restart: unless-stopped
+    init: true
+
+  webhook-proxy:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.webhook.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_started
+    networks: [docker_network]
+    restart: unless-stopped
+
 networks:
   docker_network:
     name: ${DOCKER_NETWORK:?DOCKER_NETWORK is required}

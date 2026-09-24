@@ -40,6 +40,7 @@ type App struct {
 	debtsterIntegrationKey string
 	debtsterAPI            string
 	httpClient             *http.Client
+	aiHTTPClient           *http.Client
 	static                 string
 	secret                 []byte
 	progress               *progressHub
@@ -47,7 +48,6 @@ type App struct {
 	openAIAPIKey           string
 	openAIModel            string
 	openAIAPIBaseURL       string
-	openAITimeoutSeconds   int
 	whatsappMode           string
 }
 
@@ -69,8 +69,16 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer db.Close()
 
-	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), openAIAPIKey: cfg.OpenAIAPIKey, openAIModel: cfg.OpenAIModel, openAIAPIBaseURL: strings.TrimRight(cfg.OpenAIAPIBaseURL, "/"), openAITimeoutSeconds: cfg.OpenAITimeoutSeconds, whatsappMode: cfg.WhatsAppMode, progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), openAIAPIKey: cfg.OpenAIAPIKey, openAIModel: cfg.OpenAIModel, openAIAPIBaseURL: strings.TrimRight(cfg.OpenAIAPIBaseURL, "/"), whatsappMode: cfg.WhatsAppMode, progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
 	a.httpClient = newDebtsterClient(cfg.DebtsterKey, cfg.DebtsterMock)
+	aiTimeout := cfg.OpenAITimeoutSeconds
+	if aiTimeout <= 0 {
+		aiTimeout = 30
+	}
+	a.aiHTTPClient = &http.Client{Timeout: time.Duration(aiTimeout) * time.Second}
+	if cfg.OpenAIAPIKey == "" {
+		log.Print("WhatsApp AI analysis disabled: OPENAI_API_KEY is not set")
+	}
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
 	}

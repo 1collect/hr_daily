@@ -310,8 +310,8 @@ func (a *App) whatsappWebhook(w http.ResponseWriter, r *http.Request) {
 			value, _ := ch["value"].(map[string]any)
 			metadata, _ := value["metadata"].(map[string]any)
 			phoneID, _ := metadata["phone_number_id"].(string)
-			var cfgID, mode, token, secret, phoneNumber string
-			if err := a.db.QueryRow(r.Context(), `SELECT id,transport_mode,access_token,app_secret,phone_number FROM whatsapp_waba_configs WHERE phone_number_id=$1 AND active`, phoneID).Scan(&cfgID, &mode, &token, &secret, &phoneNumber); err != nil {
+			var cfgID, mode, token, secret, phoneNumberID string
+			if err := a.db.QueryRow(r.Context(), `SELECT id,transport_mode,access_token,app_secret,phone_number_id FROM whatsapp_waba_configs WHERE phone_number_id=$1 AND active`, phoneID).Scan(&cfgID, &mode, &token, &secret, &phoneNumberID); err != nil {
 				continue
 			}
 			if !validWhatsAppSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
@@ -324,7 +324,7 @@ func (a *App) whatsappWebhook(w http.ResponseWriter, r *http.Request) {
 				if sender == "" {
 					continue
 				}
-				if err := a.handleWhatsAppIncoming(r.Context(), cfgID, mode, token, phoneNumber, sender, whatsappContactName(value, sender), whatsappMessageText(msg), messageID); err != nil {
+				if err := a.handleWhatsAppIncoming(r.Context(), cfgID, mode, token, phoneNumberID, sender, whatsappContactName(value, sender), whatsappMessageText(msg), messageID); err != nil {
 					log.Printf("whatsapp webhook handling failed: %v", err)
 				}
 			}

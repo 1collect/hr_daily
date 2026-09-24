@@ -74,11 +74,15 @@ func main() {
 }
 
 func whatsappMode() string {
-	mode := getenv("WHATSAPP_MODE", "whatsapp")
-	if mode != "whatsapp" && mode != "whatsapp_test" {
-		log.Fatal("WHATSAPP_MODE must be whatsapp or whatsapp_test")
+	mode := getenv("WHATSAPP_MODE", "production")
+	switch mode {
+	case "production":
+		return "whatsapp"
+	case "test":
+		return "whatsapp_test"
+	default:
+		log.Fatal("WHATSAPP_MODE must be production or test")
 	}
-	return mode
 }
 
 func debtsterMock() bool {

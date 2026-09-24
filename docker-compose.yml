@@ -26,7 +26,7 @@ services:
       HTTP_ADDR: ${HTTP_ADDR:?HTTP_ADDR is required}
       APP_SECRET: ${APP_SECRET:?APP_SECRET is required}
       STATIC_DIR: ${STATIC_DIR:?STATIC_DIR is required}
-      WHATSAPP_MODE: ${WHATSAPP_MODE:-whatsapp}
+      WHATSAPP_MODE: ${WHATSAPP_MODE:-production}
       SUPERADMIN_LOGIN: ${SUPERADMIN_LOGIN:?SUPERADMIN_LOGIN is required}
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?SUPERADMIN_PASSWORD is required}
     depends_on:

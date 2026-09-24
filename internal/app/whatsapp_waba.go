@@ -20,6 +20,19 @@ type whatsappWABAConfig struct {
 	TransportMode string `json:"transportMode"`
 }
 
+type whatsappWABAConfigInput struct {
+	EmployeeID    string `json:"employeeId"`
+	PhoneNumber   string `json:"phoneNumber"`
+	DisplayName   string `json:"displayName"`
+	WABAID        string `json:"wabaId"`
+	PhoneNumberID string `json:"phoneNumberId"`
+	AccessToken   string `json:"accessToken"`
+	VerifyToken   string `json:"verifyToken"`
+	AppSecret     string `json:"appSecret"`
+	Active        bool   `json:"active"`
+	TransportMode string `json:"transportMode"`
+}
+
 func (a *App) whatsappWABAConfigs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireManager(w, r); !ok {
 		return
@@ -51,7 +64,7 @@ func (a *App) whatsappWABAConfigs(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, http.StatusOK, out)
 }
 
-func validateWhatsAppWABAConfig(in *whatsappWABAConfig) string {
+func validateWhatsAppWABAConfig(in *whatsappWABAConfigInput) string {
 	in.EmployeeID = strings.TrimSpace(in.EmployeeID)
 	in.PhoneNumber = strings.TrimSpace(in.PhoneNumber)
 	in.DisplayName = strings.TrimSpace(in.DisplayName)
@@ -83,7 +96,7 @@ func (a *App) createWhatsAppWABAConfig(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireManager(w, r); !ok {
 		return
 	}
-	var in whatsappWABAConfig
+	var in whatsappWABAConfigInput
 	if !decode(w, r, &in) {
 		return
 	}
@@ -117,7 +130,7 @@ func (a *App) updateWhatsAppWABAConfig(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireManager(w, r); !ok {
 		return
 	}
-	var in whatsappWABAConfig
+	var in whatsappWABAConfigInput
 	if !decode(w, r, &in) {
 		return
 	}

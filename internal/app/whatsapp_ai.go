@@ -74,13 +74,35 @@ func localWhatsAppAnswers(text string, questions []whatsappQuestion) []whatsappA
 	for _, q := range questions {
 		byPos[q.Position] = q
 	}
-	re := regexp.MustCompile(`(?m)^\s*(\d+)\s*[).:-]\s*(.+?)\s*$`)
+	// Accept both one-answer-per-line and compact replies such as
+	// "1. Name 2. 19 3. Yes". Each numbered marker starts a new answer.
+	re := regexp.MustCompile(`(?:^|[\s])([0-9]{1,2})\s*[).:-]\s*`)
 	out := []whatsappAIAnswer{}
-	for _, m := range re.FindAllStringSubmatch(text, -1) {
-		p, _ := strconv.Atoi(m[1])
-		if q, ok := byPos[p]; ok {
-			out = append(out, whatsappAIAnswer{QuestionID: q.ID, Answer: strings.TrimSpace(m[2]), Evidence: strings.TrimSpace(m[2])})
+	markers := re.FindAllStringSubmatchIndex(text, -1)
+	for i, m := range markers {
+		p, _ := strconv.Atoi(text[m[2]:m[3]])
+		if _, ok := byPos[p]; !ok {
+			continue
 		}
+		start := m[1]
+		if i+1 < len(markers) {
+			startNext := markers[i+1][0]
+			// The next marker's leading whitespace belongs to the separator.
+			for startNext > start && (text[startNext-1] == ' ' || text[startNext-1] == '\n' || text[startNext-1] == '\t' || text[startNext-1] == '\r') {
+				startNext--
+			}
+			if startNext < start {
+				startNext = markers[i+1][0]
+			}
+			start = startNext
+		}
+		answer := strings.TrimSpace(text[m[1]:start])
+		answer = strings.Trim(answer, " \t\r\n,;")
+		if answer == "" {
+			continue
+		}
+		q := byPos[p]
+		out = append(out, whatsappAIAnswer{QuestionID: q.ID, Answer: answer, Evidence: answer})
 	}
 	if len(out) > 0 {
 		return out

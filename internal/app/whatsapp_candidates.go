@@ -22,16 +22,23 @@ import (
 const whatsappCandidatePermission = "candidates.whatsapp.view"
 
 type whatsappCandidate struct {
-	ID              string    `json:"id"`
-	ConfigID        string    `json:"configId"`
-	EmployeeName    string    `json:"employeeName"`
-	PhoneNumber     string    `json:"phoneNumber"`
-	ExternalID      string    `json:"externalId"`
-	DisplayName     string    `json:"displayName"`
-	Status          string    `json:"status"`
-	CurrentQuestion string    `json:"currentQuestion"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID               string    `json:"id"`
+	ConfigID         string    `json:"configId"`
+	EmployeeName     string    `json:"employeeName"`
+	PhoneNumber      string    `json:"phoneNumber"`
+	ExternalID       string    `json:"externalId"`
+	DisplayName      string    `json:"displayName"`
+	Status           string    `json:"status"`
+	CurrentQuestion  string    `json:"currentQuestion"`
+	FullName         string    `json:"fullName"`
+	Age              string    `json:"age"`
+	Studying         string    `json:"studying"`
+	FinalYear        string    `json:"finalYear"`
+	CriminalRecord   string    `json:"criminalRecord"`
+	BankRestrictions string    `json:"bankRestrictions"`
+	LastJob          string    `json:"lastJob"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type whatsappQuestion struct {
@@ -66,11 +73,33 @@ func (a *App) whatsappCandidateList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.db.Query(r.Context(), `
 		SELECT c.id,c.config_id,trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),
-		w.phone_number,c.external_id,c.display_name,c.status,COALESCE(q.text,''),c.created_at,c.updated_at
+		w.phone_number,c.external_id,c.display_name,
+		CASE
+		  WHEN c.status='rejected' THEN 'rejected'
+		  WHEN c.status IN ('survey_completed','contacted','hired') THEN 'accepted'
+		  WHEN COALESCE(m.last_incoming,c.created_at) < now()-interval '24 hours' THEN 'ignored'
+		  WHEN COALESCE(a.answer_count,0)>0 THEN 'incomplete'
+		  ELSE 'in_progress'
+		END,
+		COALESCE(q.text,''),COALESCE(a.full_name,''),COALESCE(a.age,''),COALESCE(a.studying,''),
+		COALESCE(a.final_year,''),COALESCE(a.criminal_record,''),COALESCE(a.bank_restrictions,''),COALESCE(a.last_job,''),c.created_at,c.updated_at
 		FROM whatsapp_candidates c
 		JOIN whatsapp_waba_configs w ON w.id=c.config_id
 		JOIN employees e ON e.id=w.employee_id
 		LEFT JOIN whatsapp_questions q ON q.id=c.current_question_id
+		LEFT JOIN LATERAL (
+		  SELECT count(*) AS answer_count,
+		    max(a.text) FILTER (WHERE question.key='full_name') AS full_name,
+		    max(a.text) FILTER (WHERE question.key='age') AS age,
+		    max(a.text) FILTER (WHERE question.key='studying') AS studying,
+		    max(a.text) FILTER (WHERE question.key='is_final_year') AS final_year,
+		    max(a.text) FILTER (WHERE question.key='criminal_record') AS criminal_record,
+		    max(a.text) FILTER (WHERE question.key='bank_restrictions') AS bank_restrictions,
+		    max(a.text) FILTER (WHERE question.key='last_job') AS last_job
+		  FROM whatsapp_answers a JOIN whatsapp_questions question ON question.id=a.question_id
+		  WHERE a.candidate_id=c.id
+		) a ON true
+		LEFT JOIN LATERAL (SELECT max(sent_at) AS last_incoming FROM whatsapp_messages WHERE candidate_id=c.id AND direction='incoming') m ON true
 		WHERE ($1::text='' OR w.employee_id=$1::uuid)
 		ORDER BY c.updated_at DESC`, c.EmployeeID)
 	if err != nil {
@@ -81,7 +110,7 @@ func (a *App) whatsappCandidateList(w http.ResponseWriter, r *http.Request) {
 	out := []whatsappCandidate{}
 	for rows.Next() {
 		var x whatsappCandidate
-		if err = rows.Scan(&x.ID, &x.ConfigID, &x.EmployeeName, &x.PhoneNumber, &x.ExternalID, &x.DisplayName, &x.Status, &x.CurrentQuestion, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err = rows.Scan(&x.ID, &x.ConfigID, &x.EmployeeName, &x.PhoneNumber, &x.ExternalID, &x.DisplayName, &x.Status, &x.CurrentQuestion, &x.FullName, &x.Age, &x.Studying, &x.FinalYear, &x.CriminalRecord, &x.BankRestrictions, &x.LastJob, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -433,7 +462,7 @@ func (a *App) handleWhatsAppIncoming(ctx context.Context, cfgID, mode, token, ph
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Здравствуйте! Для рассмотрения вашей кандидатуры, пожалуйста, ответьте на несколько вопросов:\n\n1. Ваше полное ФИО?\n2. Сколько Вам лет?\n3. Учитесь ли Вы сейчас?\n4. Имеется ли у Вас судимость?\n5. Имеется ли арест или ограничение на банковских счетах?\n6. Ваше последнее место работы?")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Здравствуйте! Для рассмотрения вашей кандидатуры, пожалуйста, ответьте одним сообщением на вопросы ниже. Если какой-то вопрос к вам не относится, напишите «нет».\n\n1. Ваше полное ФИО?\n2. Сколько Вам лет?\n3. Учитесь ли Вы сейчас?\n4. Имеется ли у Вас судимость?\n5. Имеется ли арест или ограничение на банковских счетах?\n6. Ваше последнее место работы?")
 	}
 	return a.processWhatsAppTextAI(ctx, candidateID, mode, token, phoneNumber, sender, text, current)
 }
@@ -459,7 +488,20 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 	_ = a.db.QueryRow(ctx, `SELECT text FROM whatsapp_messages WHERE candidate_id=$1 AND direction='outgoing' ORDER BY sent_at DESC,id DESC LIMIT 1`, candidateID).Scan(&previous)
 	extracted, err := a.extractWhatsAppAnswers(ctx, text, previous, questions)
 	if err != nil {
-		return nil
+		log.Printf("whatsapp answer extraction failed; trying local parser: %v", err)
+		extracted = localWhatsAppAnswers(text, questions)
+	} else {
+		// Preserve explicit numbered answers even if the AI only extracted a subset.
+		seen := map[string]bool{}
+		for _, item := range extracted {
+			seen[item.QuestionID] = true
+		}
+		for _, item := range localWhatsAppAnswers(text, questions) {
+			if !seen[item.QuestionID] {
+				extracted = append(extracted, item)
+				seen[item.QuestionID] = true
+			}
+		}
 	}
 	valid := map[string]whatsappQuestion{}
 	for _, q := range questions {
@@ -480,9 +522,6 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 		}
 		saved++
 	}
-	if saved == 0 {
-		return nil
-	}
 	if reason, err := a.whatsappRejectionReason(ctx, candidateID); err != nil {
 		return err
 	} else if reason != "" {
@@ -490,26 +529,48 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "К сожалению, ваша кандидатура нам не подходит.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы!\n\nК сожалению, ваша кандидатура нам не подходит.")
 	}
-	var nextID, nextText string
-	err = a.db.QueryRow(ctx, `SELECT q.id,q.text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position LIMIT 1`, candidateID).Scan(&nextID, &nextText)
-	if err == pgx.ErrNoRows {
+	remainingRows, err := a.db.Query(ctx, `SELECT q.id,q.text,q.position FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY q.position`, candidateID)
+	if err != nil {
+		return err
+	}
+	remaining := []whatsappQuestion{}
+	for remainingRows.Next() {
+		var q whatsappQuestion
+		if err = remainingRows.Scan(&q.ID, &q.Text, &q.Position); err != nil {
+			remainingRows.Close()
+			return err
+		}
+		remaining = append(remaining, q)
+	}
+	err = remainingRows.Err()
+	remainingRows.Close()
+	if err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
 		_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='survey_completed',current_question_id=NULL,survey_completed_at=now(),updated_at=now() WHERE id=$1`, candidateID)
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "С вами свяжутся наши менеджеры в ближайшее время.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы!\n\nС вами свяжутся наши менеджеры в ближайшее время.")
 	}
-	if err != nil {
-		return err
-	}
-	_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET current_question_id=$2,status='survey_in_progress',updated_at=now() WHERE id=$1`, candidateID, nextID)
+	_, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET current_question_id=$2,status='survey_in_progress',updated_at=now() WHERE id=$1`, candidateID, remaining[0].ID)
 	if err != nil {
 		return err
 	}
 	_ = current
-	return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, nextText)
+	var followup strings.Builder
+	if saved == 0 {
+		followup.WriteString("Не удалось распознать ответы. Пожалуйста, ответьте одним сообщением на оставшиеся вопросы:\n\n")
+	} else {
+		followup.WriteString("Спасибо! Остались вопросы — пожалуйста, ответьте на них одним сообщением:\n\n")
+	}
+	for _, q := range remaining {
+		fmt.Fprintf(&followup, "%d. %s\n", q.Position, q.Text)
+	}
+	return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, strings.TrimSpace(followup.String()))
 }
 
 func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text, current string) error {
@@ -539,7 +600,7 @@ func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token,
 		if _, err = a.db.Exec(ctx, `UPDATE whatsapp_candidates SET status='rejected',current_question_id=NULL,survey_completed_at=NULL,updated_at=now() WHERE id=$1`, candidateID); err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "К сожалению, ваша кандидатура нам не подходит.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы!\n\nК сожалению, ваша кандидатура нам не подходит.")
 	}
 	var nextID, nextText string
 	if err = a.db.QueryRow(ctx, `SELECT id,text FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) AND (q.show_if_question_id IS NULL OR EXISTS(SELECT 1 FROM whatsapp_answers parent WHERE parent.candidate_id=$1 AND parent.question_id=q.show_if_question_id AND parent.text=q.show_if_answer)) ORDER BY position LIMIT 1`, candidateID).Scan(&nextID, &nextText); err == pgx.ErrNoRows {
@@ -547,7 +608,7 @@ func (a *App) processWhatsAppText(ctx context.Context, candidateID, mode, token,
 		if err != nil {
 			return err
 		}
-		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "С вами свяжутся наши менеджеры в ближайшее время.")
+		return a.sendWhatsApp(ctx, candidateID, mode, token, phoneNumber, sender, "Спасибо за ответы!\n\nС вами свяжутся наши менеджеры в ближайшее время.")
 	} else if err != nil {
 		return err
 	}

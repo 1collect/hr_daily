@@ -48,7 +48,7 @@ const icons={
   calendar:icon('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>')
 };
 const reportPage=[['report',icons.report,'Ежедневный отчёт'],['trainee-reports',icons.employees,'Отчеты по стажерам'],['correction-requests',icons.correction,'Запросы на корректировку'],['hr-requests',icons.correction,'Заявки HR']];
-reportPage.push(['whatsapp',icons.access,'WhatsApp WABA']);let pages:string[][]=reportPage;
+let pages:string[][]=reportPage;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
 const dateObject=(value:string)=>new Date(value+'T12:00:00');
 const dateValue=(value:Date)=>value.toISOString().slice(0,10);
@@ -145,7 +145,7 @@ function resetPageFilters(){reportDate=businessToday();selectedEmployee='';admin
 function drawNav(){
   const groups=[{label:'Работа с отчётами',ids:['report','main-report','trainee-reports','correction-requests','hr-requests','exports']},{label:'Главный офис',ids:['main-office-vacancies','main-offices']},{label:'Управление',ids:['users','offices','whatsapp']}];
   nav.innerHTML=groups.map(group=>{
-    const items=pages.filter(([id])=>group.ids.includes(id)&&(id!=='whatsapp'||manager()));if(group.ids.includes('whatsapp')&&manager()&&!items.some(([id])=>id==='whatsapp'))items.push(['whatsapp',icons.access,'WhatsApp WABA']);
+    const items=pages.filter(([id])=>group.ids.includes(id)&&!['main-report','main-office-vacancies','main-offices','whatsapp','whatsapp-candidates'].includes(id));
     if(!items.length)return '';
     return `<div class="nav-group"><div class="nav-group-title">${group.label}</div>${items.map(([id,itemIcon,label])=>{
       const badge=id==='report'?'РП':id==='main-report'?'ГО':'';
@@ -157,14 +157,6 @@ function drawNav(){
   nav.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>{
     const nextPage=b.dataset.page!;if(nextPage!==currentPage)resetPageFilters();currentPage=nextPage;history.pushState(null,'',pageUrl(currentPage));drawNav();nav.querySelector<HTMLButtonElement>(`[data-page="${currentPage}"]`)?.focus({preventScroll:true});route();
   });
-}
-const baseDrawNav=drawNav;
-(drawNav as any)=function(){
-  baseDrawNav();
-  if(currentUser?.canAccessWhatsAppCandidates){
-    const group=document.createElement('div');group.className='nav-group';group.innerHTML='<div class="nav-group-title">Кандидаты</div><button type="button" class="nav-item '+(currentPage==='whatsapp-candidates'?'active':'')+'" data-page="whatsapp-candidates"><span class="nav-icon">'+icons.employees+'</span><span class="nav-label">Кандидаты WhatsApp</span></button>';nav.append(group);
-    group.querySelector<HTMLButtonElement>('[data-page]')!.onclick=()=>{resetPageFilters();currentPage='whatsapp-candidates';history.pushState(null,'',pageUrl(currentPage));drawNav();route()};
-  }
 }
 function setPendingCorrectionCount(count:number){
  pendingCorrectionCount=count;
@@ -729,7 +721,7 @@ document.querySelector<HTMLButtonElement>('#logout')!.onclick=async()=>{await ap
  function configureUser(){if(!currentUser)return;const exportNav=['exports',icons.download,'&#1042;&#1099;&#1075;&#1088;&#1091;&#1079;&#1082;&#1072;'];const employeeReportPages=reportPage.filter(([id])=>id!=='hr-requests').filter(([id])=>id!=='report'||currentUser?.canAccessRP!==false);pages=manager()?[...reportPage,exportNav,['users',icons.employees,'&#1055;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;']]:[...employeeReportPages,exportNav];const display=[currentUser.lastName,currentUser.firstName,currentUser.middleName].filter(Boolean).join(' ')||currentUser.username;document.querySelector('#profile-name')!.textContent=display;document.querySelector('#profile-role')!.textContent=currentUser.role==='superadmin'?'Суперадминистратор':currentUser.role==='admin'?'Администратор':'Сотрудник';document.querySelector('#profile-avatar')!.textContent=((currentUser.firstName?.[0]||'')+(currentUser.lastName?.[0]||currentUser.username[0]||'')).toUpperCase();reportDate=pageWasReloaded()?businessToday():dateFromLocation();const requestedPage=pageFromLocation();currentPage=pages.some(([id])=>id===requestedPage)?requestedPage:(employeeReportPages[0]?.[0]||'trainee-reports');selectedEmployee='';adminUsers=[];pendingCorrectionCount=0;const vacancyId=currentPage==='main-office-vacancies'?new URLSearchParams(location.search).get('vacancy'):'';history.replaceState(null,'',pageUrl(currentPage)+(vacancyId?`?vacancy=${encodeURIComponent(vacancyId)}`:''));drawNav();route();if(manager()&&currentPage!=='correction-requests')void refreshPendingCorrectionCount()}
 function showLogin(message=''){pendingCorrectionCount=0;nav.innerHTML='';document.body.classList.add('logged-out');modalRoot.innerHTML=`<div class="login-screen"><form class="login-card" id="login-form"><div class="login-brand"><span class="brand-mark">HR</span><div><strong>HR Daily</strong></div></div><div class="login-copy"><h1>Вход в систему</h1><p>Введите логин и пароль учётной записи</p></div><div class="field"><label>Логин</label><input id="login-name" class="input" autocomplete="username" autofocus></div><div class="field"><label>Пароль</label><input id="login-password" class="input" type="password" autocomplete="current-password"></div><div id="login-error" class="login-error">${esc(message)}</div><button class="btn btn-primary login-submit" type="submit">Войти</button></form></div>`;document.querySelector<HTMLFormElement>('#login-form')!.onsubmit=async e=>{e.preventDefault();const button=document.querySelector<HTMLButtonElement>('.login-submit')!;button.disabled=true;button.textContent='Вход...';try{currentUser=await api<User>('/api/auth/login',{method:'POST',body:JSON.stringify({username:(document.querySelector('#login-name') as HTMLInputElement).value,password:(document.querySelector('#login-password') as HTMLInputElement).value})});modalRoot.innerHTML='';document.body.classList.remove('logged-out');configureUser()}catch(err){document.querySelector('#login-error')!.textContent=(err as Error).message;button.disabled=false;button.textContent='Войти'}};requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('#login-name')?.focus())}
 const baseConfigureUser=configureUser;
-(configureUser as any)=()=>{baseConfigureUser();if(currentUser?.canAccessWhatsAppCandidates){pages.push(['whatsapp-candidates',icons.employees,'Кандидаты WhatsApp']);const requested=pageFromLocation();if(requested==='whatsapp-candidates'){currentPage=requested;history.replaceState(null,'',pageUrl(currentPage));drawNav();route()}}};
+(configureUser as any)=()=>{baseConfigureUser()};
 async function init(){try{currentUser=await api<User>('/api/auth/me');document.body.classList.remove('logged-out');configureUser()}catch{showLogin()}}
 init();
 

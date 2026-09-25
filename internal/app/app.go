@@ -83,6 +83,9 @@ func Run(ctx context.Context, cfg Config) error {
 		log.Print("WhatsApp AI analysis disabled: OPENAI_API_KEY is not set")
 	}
 	go a.runWhatsAppReminderWorker(ctx)
+	if a.bitrixWebhookBaseURL != "" {
+		go a.runBitrixHRVacancySync(ctx)
+	}
 	if err = a.ensureSuperadmin(ctx, cfg.SuperLogin, cfg.SuperPass); err != nil {
 		return fmt.Errorf("superadmin: %w", err)
 	}
@@ -156,6 +159,10 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("POST /api/reports/{id}/complete", a.completeReport)
 	m.HandleFunc("GET /api/reports/export", a.exportPeriod)
 	m.HandleFunc("GET /api/main-offices", a.mainOffices)
+	m.HandleFunc("GET /api/main-office/vacancies", a.mainOfficeVacancies)
+	m.HandleFunc("GET /api/main-office/vacancies/{id}/candidates", a.mainOfficeVacancyCandidates)
+	m.HandleFunc("POST /api/main-office/vacancies/{id}/candidates", a.createMainOfficeCandidate)
+	m.HandleFunc("PUT /api/main-office/candidates/{id}", a.updateMainOfficeCandidate)
 	m.HandleFunc("POST /api/main-offices", a.createMainOffice)
 	m.HandleFunc("PUT /api/main-offices/order", a.reorderMainOffices)
 	m.HandleFunc("PUT /api/main-offices/{id}", a.updateMainOffice)

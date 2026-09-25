@@ -23,6 +23,8 @@ type mainOfficeVacancy struct {
 	Initiator       string `json:"initiator"`
 	Responsible     string `json:"responsible"`
 	DepartmentCode  string `json:"departmentCode"`
+	CompanyID       string `json:"companyId"`
+	CompanyName     string `json:"companyName"`
 	Details         string `json:"details"`
 }
 
@@ -60,19 +62,33 @@ func (a *App) syncBitrixHRVacancies(ctx context.Context) error {
 				return err
 			}
 		}
+		companyName := numberedRequestValue(item.Details, 1)
+		var companyID any
+		if companyName != "" {
+			normalizedName := normalizeCompanyName(companyName)
+			var id string
+			if err = tx.QueryRow(ctx, `
+				INSERT INTO companies(name,normalized_name) VALUES($1,$2)
+				ON CONFLICT(normalized_name) DO UPDATE SET updated_at=now()
+				RETURNING id::text
+			`, companyName, normalizedName).Scan(&id); err != nil {
+				return err
+			}
+			companyID = id
+		}
 		if _, err = tx.Exec(ctx, `
 			INSERT INTO bitrix_hr_requests(
 				bitrix_request_id,title,stage_id,created_time,created_by_id,created_by_name,
-				assigned_by_id,assigned_by_name,department_code,details,raw_payload,synced_at
-			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+				assigned_by_id,assigned_by_name,department_code,details,raw_payload,company_id,synced_at
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
 			ON CONFLICT(bitrix_request_id) DO UPDATE SET
 				title=EXCLUDED.title,stage_id=EXCLUDED.stage_id,created_time=EXCLUDED.created_time,
 				created_by_id=EXCLUDED.created_by_id,created_by_name=EXCLUDED.created_by_name,
 				assigned_by_id=EXCLUDED.assigned_by_id,assigned_by_name=EXCLUDED.assigned_by_name,
 				department_code=EXCLUDED.department_code,details=EXCLUDED.details,
-				raw_payload=EXCLUDED.raw_payload,synced_at=now()
+				raw_payload=EXCLUDED.raw_payload,company_id=COALESCE(EXCLUDED.company_id,bitrix_hr_requests.company_id),synced_at=now()
 		`, item.ID, item.Title, item.StageID, item.CreatedTime, item.CreatedBy, item.Initiator,
-			item.AssignedByID, item.Responsible, bitrixValue(item.Department), item.Details, payload); err != nil {
+			item.AssignedByID, item.Responsible, bitrixValue(item.Department), item.Details, payload, companyID); err != nil {
 			return err
 		}
 		vacancyTitle := numberedRequestValue(item.Details, 2)
@@ -116,12 +132,14 @@ func (a *App) loadMainOfficeVacancies(ctx context.Context) ([]mainOfficeVacancy,
 		SELECT v.id::text,r.bitrix_request_id,r.title,v.title,v.requested_count,
 			count(c.id) FILTER (WHERE c.status='hired')::int,
 			count(c.id) FILTER (WHERE c.status='hired') >= v.requested_count,
-			r.created_time,r.created_by_name,r.assigned_by_name,r.department_code,r.details
+			r.created_time,r.created_by_name,r.assigned_by_name,r.department_code,
+			COALESCE(company.id::text,''),COALESCE(company.name,''),r.details
 		FROM main_office_vacancies v
 		JOIN bitrix_hr_requests r USING(bitrix_request_id)
+		LEFT JOIN companies company ON company.id=r.company_id
 		LEFT JOIN main_office_candidates c ON c.vacancy_id=v.id
 		GROUP BY v.id,r.bitrix_request_id,r.title,v.title,v.requested_count,r.created_time,
-			r.created_by_name,r.assigned_by_name,r.department_code,r.details
+			r.created_by_name,r.assigned_by_name,r.department_code,company.id,company.name,r.details
 		ORDER BY r.created_time DESC,r.bitrix_request_id DESC
 	`)
 	if err != nil {
@@ -133,7 +151,7 @@ func (a *App) loadMainOfficeVacancies(ctx context.Context) ([]mainOfficeVacancy,
 		var item mainOfficeVacancy
 		if err = rows.Scan(&item.ID, &item.BitrixRequestID, &item.RequestTitle, &item.VacancyTitle,
 			&item.RequestedCount, &item.HiredCount, &item.IsClosed, &item.CreatedTime, &item.Initiator, &item.Responsible,
-			&item.DepartmentCode, &item.Details); err != nil {
+			&item.DepartmentCode, &item.CompanyID, &item.CompanyName, &item.Details); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -326,4 +344,8 @@ func bitrixValue(value any) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func normalizeCompanyName(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(name)), " "))
 }

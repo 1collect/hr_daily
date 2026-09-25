@@ -55,7 +55,7 @@ function nearestBusinessDate(value:string,direction:-1|1=-1){const date=dateObje
 const businessToday=()=>nearestBusinessDate(today(),-1);
 const displayDate=(value:string)=>dateObject(value).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'});
 let currentPage='report', reportDate=today(), report:Bootstrap|null=null, saveTimers=new Map<string,number>();
-const pagePaths:Record<string,string>={report:'/', 'main-report':'/main-report', 'trainee-reports':'/trainee-reports','correction-requests':'/correction-requests',exports:'/exports',users:'/users',offices:'/offices','main-offices':'/main-offices',whatsapp:'/whatsapp','whatsapp-candidates':'/whatsapp-candidates'};
+const pagePaths:Record<string,string>={report:'/', 'main-report':'/main-report', 'trainee-reports':'/trainee-reports','correction-requests':'/correction-requests','hr-requests':'/hr-requests',exports:'/exports',users:'/users',offices:'/offices','main-offices':'/main-offices',whatsapp:'/whatsapp','whatsapp-candidates':'/whatsapp-candidates'};
 const reportPages=new Set(['report','main-report','trainee-reports']);
 const pageWasReloaded=()=>{const navigation=performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming|undefined;return navigation?.type==='reload'||(performance as any).navigation?.type===1};
 function pageFromLocation(){const path=location.pathname.replace(/\/+$/,'')||'/';return Object.entries(pagePaths).find(([,value])=>value===path)?.[0]||(path==='/whatsapp'&&manager()?'whatsapp':'report')}
@@ -141,7 +141,7 @@ function toast(message:string,error=false){
 function setHeader(h:string,s:string){title.textContent=h;subtitle.textContent=s}
 function resetPageFilters(){reportDate=businessToday();selectedEmployee='';adminUsers=[];closeDatePicker()}
 function drawNav(){
-  const groups=[{label:'Работа с отчётами',ids:['report','main-report','trainee-reports','correction-requests','exports']},{label:'Управление',ids:['users','offices','main-offices','whatsapp']}];
+  const groups=[{label:'Работа с отчётами',ids:['report','main-report','trainee-reports','correction-requests','hr-requests','exports']},{label:'Управление',ids:['users','offices','main-offices','whatsapp']}];
   nav.innerHTML=groups.map(group=>{
     const items=pages.filter(([id])=>group.ids.includes(id)&&(id!=='whatsapp'||manager()));if(group.ids.includes('whatsapp')&&manager()&&!items.some(([id])=>id==='whatsapp'))items.push(['whatsapp',icons.access,'WhatsApp WABA']);
     if(!items.length)return '';

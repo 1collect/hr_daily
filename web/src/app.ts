@@ -47,7 +47,7 @@ const icons={
   correction:icon('<path d="M4 4h11l5 5v11H4zM14 4v6h6M8 14h8M8 17h5"/><path d="m7 8 1.5 1.5L11 7"/>'),
   calendar:icon('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>')
 };
-const reportPage=[['report',icons.report,'Ежедневный отчёт'],['trainee-reports',icons.employees,'Отчеты по стажерам'],['correction-requests',icons.correction,'Запросы на корректировку'],['hr-requests',icons.correction,'Заявки HR']];
+const reportPage=[['report',icons.report,'Ежедневный отчёт'],['trainee-reports',icons.employees,'Отчеты по стажерам'],['correction-requests',icons.correction,'Запросы на корректировку']];
 let pages:string[][]=reportPage;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
 const dateObject=(value:string)=>new Date(value+'T12:00:00');
@@ -145,7 +145,7 @@ function resetPageFilters(){reportDate=businessToday();selectedEmployee='';admin
 function drawNav(){
   const groups=[{label:'Работа с отчётами',ids:['report','main-report','trainee-reports','correction-requests','hr-requests','exports']},{label:'Главный офис',ids:['main-office-vacancies','main-offices']},{label:'Управление',ids:['users','offices','whatsapp']}];
   nav.innerHTML=groups.map(group=>{
-    const items=pages.filter(([id])=>group.ids.includes(id)&&!['main-report','main-office-vacancies','main-offices','whatsapp','whatsapp-candidates'].includes(id));
+    const items=pages.filter(([id])=>group.ids.includes(id)&&!['main-report','main-office-vacancies','main-offices','whatsapp','whatsapp-candidates','hr-requests'].includes(id));
     if(!items.length)return '';
     return `<div class="nav-group"><div class="nav-group-title">${group.label}</div>${items.map(([id,itemIcon,label])=>{
       const badge=id==='report'?'РП':id==='main-report'?'ГО':'';

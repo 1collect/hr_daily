@@ -19,6 +19,7 @@ type CorrectionRequest={id:string;reportDate:string;reportType:'rp'|'main_office
 type TraineeReport={report_type_id:number;department:string;report_date:string;reporter_id:number;trainee_id:number|null;full_name:string;status_id:string;source:string;interview_date:string|null;security_approval_date:string|null;internship_start_date:string|null;task_start_date:string|null;note:string;file_name:string;file_object_key:string;matches:{full_name:string;score:number;report_row_id?:string}[]};
 type TraineeCorrectionDetail={fullName:string;category:string;reportDate:string;department:string;responsible:string;addedAt:string;reportRowId:string};
 type TraineeCorrectionRequest={id:string;reportDate:string;department:string;debtsterFullName:string;debtsterSource:string;localRecord:TraineeCorrectionDetail;proposedChange:Record<string,string>;note:string;status:string;debtsterNote:string;requestedByName:string;requestedByUsername:string;createdAt:string;processedAt?:string};
+type HRRequest={id:number;title:string;stageId:string;createdTime:string;ufCrm16_1729775124:number|string;ufCrm16_1724755746:string};
 const content=document.querySelector<HTMLElement>('#content')!;
 const modalRoot=document.querySelector<HTMLElement>('#modal-root')!;
 const datePickerRoot=document.querySelector<HTMLElement>('#date-picker-root')!;
@@ -44,7 +45,7 @@ const icons={
   correction:icon('<path d="M4 4h11l5 5v11H4zM14 4v6h6M8 14h8M8 17h5"/><path d="m7 8 1.5 1.5L11 7"/>'),
   calendar:icon('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>')
 };
-const reportPage=[['report',icons.report,'Ежедневный отчёт'],['main-report',icons.report,'Ежедневный отчет (ГО)'],['trainee-reports',icons.employees,'Отчеты по стажерам'],['correction-requests',icons.correction,'Запросы на корректировку']];
+const reportPage=[['report',icons.report,'Ежедневный отчёт'],['main-report',icons.report,'Ежедневный отчет (ГО)'],['trainee-reports',icons.employees,'Отчеты по стажерам'],['correction-requests',icons.correction,'Запросы на корректировку'],['hr-requests',icons.correction,'Заявки HR']];
 reportPage.push(['whatsapp',icons.access,'WhatsApp WABA']);let pages:string[][]=reportPage;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
 const dateObject=(value:string)=>new Date(value+'T12:00:00');
@@ -175,7 +176,7 @@ async function refreshPendingCorrectionCount(){
  if(!manager()){setPendingCorrectionCount(0);return}
  try{const requests=await api<CorrectionRequest[]>('/api/correction-requests');setPendingCorrectionCount(requests.filter(request=>request.status==='pending').length)}catch{}
 }
-async function route(){closeDatePicker();const reportView=currentPage==='report'||currentPage==='main-report'||currentPage==='trainee-reports';if(currentPage!=='report')stopDebtsterRefresh();content.classList.toggle('report-workspace',reportView);document.body.classList.toggle('report-page',reportView);if(currentPage!=='report'&&currentPage!=='main-report'&&reportSocket){const old=reportSocket;reportSocket=null;old.close()}content.innerHTML='<div class="empty">Загрузка…</div>';try{if(currentPage==='report'||currentPage==='main-report')await loadReport();else if(currentPage==='trainee-reports')await traineeReportsPage();else if(currentPage==='correction-requests')await correctionRequestsPage();else if(currentPage==='exports')await exportPage();else if(currentPage==='users')await usersPage();else if(currentPage==='offices')await officesPage();else if(currentPage==='main-offices')await mainOfficesPage();else if(currentPage==='whatsapp')await whatsappPage()}catch(e){content.innerHTML=`<div class="card empty">${esc((e as Error).message)}</div>`;scheduleDebtsterRefresh()}}
+async function route(){closeDatePicker();const reportView=currentPage==='report'||currentPage==='main-report'||currentPage==='trainee-reports';if(currentPage!=='report')stopDebtsterRefresh();content.classList.toggle('report-workspace',reportView);document.body.classList.toggle('report-page',reportView);if(currentPage!=='report'&&currentPage!=='main-report'&&reportSocket){const old=reportSocket;reportSocket=null;old.close()}content.innerHTML='<div class="empty">Загрузка…</div>';try{if(currentPage==='report'||currentPage==='main-report')await loadReport();else if(currentPage==='trainee-reports')await traineeReportsPage();else if(currentPage==='correction-requests')await correctionRequestsPage();else if(currentPage==='hr-requests')await hrRequestsPage();else if(currentPage==='exports')await exportPage();else if(currentPage==='users')await usersPage();else if(currentPage==='offices')await officesPage();else if(currentPage==='main-offices')await mainOfficesPage();else if(currentPage==='whatsapp')await whatsappPage()}catch(e){content.innerHTML=`<div class="card empty">${esc((e as Error).message)}</div>`;scheduleDebtsterRefresh()}}
 
 const numeric:[keyof Row,string][]=[['openVacancies','Количество открытых вакансий'],['invitedCandidates','Количество приглашенных кандидатов'],['interviewedCandidates','Количество прошедших собеседование'],['interns','Количество кандидатов на стажировке'],['plannedReserve','Планируемый резерв'],['reserveCandidates','Количество кандидатов в резерве']];
 const baseRoute=route;
@@ -497,6 +498,14 @@ function correctionDiffs(change:CorrectionChange){
  return diffs
 }
 function correctionSummary(request:CorrectionRequest){const total=correctionChangeCount(request);return `${request.changes.length} ${request.changes.length===1?'подразделение':'подразделения'} · ${total} ${total===1?'изменение':'изменений'}`}
+
+async function hrRequestsPage(){
+ setHeader('Заявки HR','Входящие заявки из Bitrix24');
+ const requests=await api<HRRequest[]>('/api/hr-requests');
+ const rows=requests.map(item=>`<tr><td><a href="https://1collekt.bitrix24.kz/crm/type/1068/details/${encodeURIComponent(item.id)}/" target="_blank" rel="noopener noreferrer">${esc(item.title||`Заявка №${item.id}`)}</a><small>#${esc(item.id)}</small></td><td>${esc(item.createdTime?new Date(item.createdTime).toLocaleString('ru-RU'):'—')}</td><td>${esc(item.ufCrm16_1729775124??'—')}</td><td class="hr-request-details">${esc(item.ufCrm16_1724755746||'—')}</td></tr>`).join('');
+ content.innerHTML=`<section class="card admin-card hr-requests-card"><div class="card-head"><div class="list-heading"><h2>Заявки HR</h2><span>${requests.length} заявок</span></div><button class="btn btn-outline" id="refresh-hr-requests" type="button">Обновить</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Заявка</th><th>Создана</th><th>Код</th><th>Информация</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty">Новых заявок нет</td></tr>'}</tbody></table></div></section>`;
+ content.querySelector<HTMLButtonElement>('#refresh-hr-requests')!.onclick=()=>void hrRequestsPage();
+}
 
 async function correctionRequestsPage(){
  const [requests,traineeRequests]=await Promise.all([api<CorrectionRequest[]>('/api/correction-requests'),api<TraineeCorrectionRequest[]>('/api/trainee-correction-requests')]);

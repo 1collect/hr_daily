@@ -226,3 +226,4 @@ body.logged-out .sidebar,body.logged-out main{display:none}.login-screen{positio
 
 .employee-request-tabs{margin:12px 0 8px;flex-wrap:wrap}.employee-request-tabs button{white-space:nowrap}@media(max-width:560px){.employee-request-tabs{display:grid;width:100%;grid-template-columns:1fr}.employee-request-tabs button{padding-inline:10px;text-align:left;font-size:11px}}
 .trainee-admin-table th:nth-child(1){width:20%}.trainee-admin-table th:nth-child(2){width:20%}.trainee-admin-table th:nth-child(3){width:16%}.trainee-admin-table th:nth-child(4){width:28%}.trainee-admin-table th:nth-child(5){width:16%}
+ .hr-request-details{white-space:pre-wrap;min-width:420px;max-width:760px;line-height:1.45}.hr-requests-card .data-table td:first-child a{font-weight:600;color:var(--primary)}.hr-requests-card .data-table td:first-child small{display:block;color:var(--muted)}

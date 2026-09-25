@@ -67,6 +67,7 @@ func main() {
 		OpenAIAPIBaseURL:       getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1"),
 		OpenAITimeoutSeconds:   getenvInt("OPENAI_TIMEOUT_SECONDS", 30),
 		WhatsAppMode:           whatsappMode(),
+		BitrixWebhookBaseURL:   getenv("BITRIX_WEBHOOK_BASE_URL", ""),
 	}
 	if err := app.Run(ctx, cfg); err != nil {
 		log.Fatal(err)

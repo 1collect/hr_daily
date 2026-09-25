@@ -33,6 +33,7 @@ type Config struct {
 	OpenAIAPIBaseURL       string
 	OpenAITimeoutSeconds   int
 	WhatsAppMode           string
+	BitrixWebhookBaseURL   string
 }
 
 type App struct {
@@ -40,6 +41,7 @@ type App struct {
 	debtsterIntegrationKey string
 	debtsterAPI            string
 	httpClient             *http.Client
+	bitrixHTTPClient       *http.Client
 	aiHTTPClient           *http.Client
 	static                 string
 	secret                 []byte
@@ -49,6 +51,7 @@ type App struct {
 	openAIModel            string
 	openAIAPIBaseURL       string
 	whatsappMode           string
+	bitrixWebhookBaseURL   string
 }
 
 type progressHub struct {
@@ -69,7 +72,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer db.Close()
 
-	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), openAIAPIKey: cfg.OpenAIAPIKey, openAIModel: cfg.OpenAIModel, openAIAPIBaseURL: strings.TrimRight(cfg.OpenAIAPIBaseURL, "/"), whatsappMode: cfg.WhatsAppMode, progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
+	a := &App{db: db, debtsterIntegrationKey: cfg.DebtsterIntegrationKey, debtsterAPI: strings.TrimRight(cfg.DebtsterAPI, "/"), httpClient: &http.Client{Timeout: 10 * time.Second}, bitrixHTTPClient: &http.Client{Timeout: 10 * time.Second}, static: cfg.StaticDir, secret: []byte(cfg.AppSecret), openAIAPIKey: cfg.OpenAIAPIKey, openAIModel: cfg.OpenAIModel, openAIAPIBaseURL: strings.TrimRight(cfg.OpenAIAPIBaseURL, "/"), whatsappMode: cfg.WhatsAppMode, bitrixWebhookBaseURL: strings.TrimRight(cfg.BitrixWebhookBaseURL, "/"), progress: &progressHub{latest: map[string]any{}, clients: map[string]map[*websocket.Conn]struct{}{}}, reports: &reportHub{clients: map[string]map[*websocket.Conn]struct{}{}}}
 	a.httpClient = newDebtsterClient(cfg.DebtsterKey, cfg.DebtsterMock)
 	aiTimeout := cfg.OpenAITimeoutSeconds
 	if aiTimeout <= 0 {
@@ -132,6 +135,7 @@ func (a *App) routes() http.Handler {
 	m.HandleFunc("POST /webhooks/whatsapp/", a.whatsappWebhook)
 	m.HandleFunc("GET /api/bootstrap", a.bootstrap)
 	m.HandleFunc("GET /api/trainees", a.trainees)
+	m.HandleFunc("GET /api/hr-requests", a.bitrixHRRequests)
 	m.HandleFunc("GET /api/trainees/correction-details", a.traineeCorrectionDetails)
 	m.HandleFunc("POST /api/trainee-correction-requests", a.createTraineeCorrectionRequest)
 	m.HandleFunc("GET /api/trainee-correction-requests", a.traineeCorrectionRequestsForUser)

@@ -330,6 +330,9 @@ func (a *App) candidatePlanTotals(ctx context.Context, date, ownerID, reportType
 }
 
 func (a *App) bootstrap(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
 	date := r.URL.Query().Get("date")
 	if !validDate(date) {
 		problem(w, 400, "Дата должна иметь формат YYYY-MM-DD")

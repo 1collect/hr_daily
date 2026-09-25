@@ -119,6 +119,9 @@ func (a *App) reorderMainOffices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) mainOfficeBootstrap(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
 	date := r.URL.Query().Get("date")
 	if !validDate(date) {
 		problem(w, 400, "Дата должна иметь формат YYYY-MM-DD")

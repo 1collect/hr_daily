@@ -58,7 +58,7 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Укажите корректный период")
 		return
 	}
-	if reportType != "rp" && reportType != "main_office" && reportType != "all" {
+	if reportType != "rp" {
 		problem(w, 400, "Укажите корректный тип отчёта")
 		return
 	}
@@ -66,9 +66,6 @@ func (a *App) exportPeriod(w http.ResponseWriter, r *http.Request) {
 	kinds := []exportKindConfig{}
 	if reportType == "rp" || reportType == "all" {
 		kinds = append(kinds, exportKinds["rp"])
-	}
-	if reportType == "main_office" || reportType == "all" {
-		kinds = append(kinds, exportKinds["main_office"])
 	}
 	var debtsterSnapshot []debtsterVacancyReport
 	if reportType == "rp" || reportType == "all" {

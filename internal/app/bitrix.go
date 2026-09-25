@@ -41,6 +41,9 @@ type bitrixUser struct {
 }
 
 func (a *App) bitrixHRRequests(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireManager(w, r); !ok {
+		return
+	}
 	if a.bitrixWebhookBaseURL == "" {
 		problem(w, http.StatusServiceUnavailable, "Bitrix24 не настроен")
 		return

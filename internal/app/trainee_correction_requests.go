@@ -22,21 +22,23 @@ type traineeCorrectionDetail struct {
 }
 
 type traineeCorrectionRequest struct {
-	ID                string                  `json:"id"`
-	ReportDate        string                  `json:"reportDate"`
-	Department        string                  `json:"department"`
-	ReporterID        int                     `json:"reporterId"`
-	DebtsterTraineeID *int                    `json:"debtsterTraineeId,omitempty"`
-	DebtsterFullName  string                  `json:"debtsterFullName"`
-	DebtsterSource    string                  `json:"debtsterSource"`
-	LocalRecord       traineeCorrectionDetail `json:"localRecord"`
-	ProposedChange    map[string]any          `json:"proposedChange"`
-	Note              string                  `json:"note"`
-	Status            string                  `json:"status"`
-	DebtsterNote      string                  `json:"debtsterNote"`
-	RequestedBy       string                  `json:"requestedBy,omitempty"`
-	CreatedAt         time.Time               `json:"createdAt"`
-	ProcessedAt       *time.Time              `json:"processedAt,omitempty"`
+	ID                  string                  `json:"id"`
+	ReportDate          string                  `json:"reportDate"`
+	Department          string                  `json:"department"`
+	ReporterID          int                     `json:"reporterId"`
+	DebtsterTraineeID   *int                    `json:"debtsterTraineeId,omitempty"`
+	DebtsterFullName    string                  `json:"debtsterFullName"`
+	DebtsterSource      string                  `json:"debtsterSource"`
+	LocalRecord         traineeCorrectionDetail `json:"localRecord"`
+	ProposedChange      map[string]any          `json:"proposedChange"`
+	Note                string                  `json:"note"`
+	Status              string                  `json:"status"`
+	DebtsterNote        string                  `json:"debtsterNote"`
+	RequestedBy         string                  `json:"requestedBy,omitempty"`
+	RequestedByName     string                  `json:"requestedByName,omitempty"`
+	RequestedByUsername string                  `json:"requestedByUsername,omitempty"`
+	CreatedAt           time.Time               `json:"createdAt"`
+	ProcessedAt         *time.Time              `json:"processedAt,omitempty"`
 }
 
 type createTraineeCorrectionRequestInput struct {
@@ -163,10 +165,11 @@ func (a *App) createTraineeCorrectionRequest(w http.ResponseWriter, r *http.Requ
 
 func (a *App) traineeCorrectionRequestsForUser(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
-	query := `SELECT id::text,report_date::text,department,COALESCE(reporter_id,0),debtster_trainee_id,
-		debtster_full_name,debtster_source,local_record,proposed_change,note,status,debtster_note,
-		COALESCE(requested_by::text,''),created_at,processed_at
-		FROM trainee_correction_requests WHERE ($1 OR requested_by=$2::uuid) ORDER BY created_at DESC LIMIT 500`
+	query := `SELECT tcr.id::text,tcr.report_date::text,tcr.department,COALESCE(tcr.reporter_id,0),tcr.debtster_trainee_id,
+		tcr.debtster_full_name,tcr.debtster_source,tcr.local_record,tcr.proposed_change,tcr.note,tcr.status,tcr.debtster_note,
+		COALESCE(tcr.requested_by::text,''),COALESCE(CASE WHEN ru.role='superadmin' THEN 'Суперадминистратор' END,NULLIF(trim(concat_ws(' ',e.last_name,e.first_name,e.middle_name)),''),ru.username,'Суперадминистратор'),COALESCE(ru.username,''),tcr.created_at,tcr.processed_at
+		FROM trainee_correction_requests tcr LEFT JOIN users ru ON ru.id=tcr.requested_by LEFT JOIN employees e ON e.id=ru.employee_id
+		WHERE ($1 OR tcr.requested_by=$2::uuid) ORDER BY tcr.created_at DESC LIMIT 500`
 	rows, err := a.db.Query(r.Context(), query, isManager(claims), claims.UserID)
 	if err != nil {
 		serverError(w, err)
@@ -177,7 +180,7 @@ func (a *App) traineeCorrectionRequestsForUser(w http.ResponseWriter, r *http.Re
 	for rows.Next() {
 		var item traineeCorrectionRequest
 		var localJSON, changeJSON []byte
-		if err = rows.Scan(&item.ID, &item.ReportDate, &item.Department, &item.ReporterID, &item.DebtsterTraineeID, &item.DebtsterFullName, &item.DebtsterSource, &localJSON, &changeJSON, &item.Note, &item.Status, &item.DebtsterNote, &item.RequestedBy, &item.CreatedAt, &item.ProcessedAt); err != nil {
+		if err = rows.Scan(&item.ID, &item.ReportDate, &item.Department, &item.ReporterID, &item.DebtsterTraineeID, &item.DebtsterFullName, &item.DebtsterSource, &localJSON, &changeJSON, &item.Note, &item.Status, &item.DebtsterNote, &item.RequestedBy, &item.RequestedByName, &item.RequestedByUsername, &item.CreatedAt, &item.ProcessedAt); err != nil {
 			serverError(w, err)
 			return
 		}

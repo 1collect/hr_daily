@@ -195,7 +195,7 @@ func fallbackWhatsAppReminder(remaining []whatsappQuestion) string {
 	var message strings.Builder
 	message.WriteString("Спасибо, часть ответов уже есть 🙂 Осталось уточнить:")
 	for _, q := range remaining {
-		fmt.Fprintf(&message, "\n%d. %s", q.Position, q.Text)
+		fmt.Fprintf(&message, "\n• %s", q.Text)
 	}
 	message.WriteString("\n\nНапишите, пожалуйста, одним сообщением.")
 	return message.String()

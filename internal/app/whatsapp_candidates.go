@@ -21,7 +21,7 @@ import (
 
 const whatsappCandidatePermission = "candidates.whatsapp.view"
 
-const whatsappWelcomeMessage = "Здравствуйте! Чтобы мы могли рассмотреть вашу кандидатуру, ответьте, пожалуйста, одним сообщением на несколько вопросов:\n\n1. Как вас зовут полностью?\n2. Сколько вам лет?\n3. Учитесь сейчас?\n4. Вы на последнем курсе?\n5. Есть ли судимость?\n6. Есть ли арест или ограничения по банковским счетам?\n7. Где вы работали в последний раз?"
+const whatsappWelcomeMessage = "Здравствуйте! Чтобы мы могли рассмотреть вашу кандидатуру, ответьте, пожалуйста, одним сообщением:\n\n• Как вас зовут полностью?\n• Сколько вам лет?\n• Учитесь сейчас?\n• Есть ли судимость?\n• Есть ли арест или ограничения по банковским счетам?\n• Где вы работали в последний раз?"
 
 type whatsappCandidate struct {
 	ID               string    `json:"id"`
@@ -474,9 +474,9 @@ func (a *App) handleWhatsAppIncoming(ctx context.Context, cfgID, mode, token, ph
 		if err != nil {
 			return err
 		}
-		return a.processWhatsAppTextAI(ctx, candidateID, mode, token, phoneNumber, sender, text, true)
+		return a.processWhatsAppTextAI(ctx, candidateID, mode, token, phoneNumber, sender, text, qid, true)
 	}
-	return a.processWhatsAppTextAI(ctx, candidateID, mode, token, phoneNumber, sender, text, false)
+	return a.processWhatsAppTextAI(ctx, candidateID, mode, token, phoneNumber, sender, text, current, false)
 }
 
 func (a *App) ignoreWhatsAppCandidate(ctx context.Context, candidateID string) error {
@@ -484,7 +484,7 @@ func (a *App) ignoreWhatsAppCandidate(ctx context.Context, candidateID string) e
 	return err
 }
 
-func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text string, first bool) error {
+func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, token, phoneNumber, sender, text, currentQuestionID string, first bool) error {
 	rows, err := a.db.Query(ctx, `SELECT q.id,q.text,q.answer_type,q.position,q.key,COALESCE(q.show_if_question_id::text,''),q.show_if_answer FROM whatsapp_questions q WHERE q.is_active AND NOT EXISTS(SELECT 1 FROM whatsapp_answers a WHERE a.candidate_id=$1 AND a.question_id=q.id) ORDER BY q.position`, candidateID)
 	if err != nil {
 		return err
@@ -530,7 +530,7 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 	analysis, err := a.analyzeWhatsAppMessage(ctx, text, previous, questions, existingAnswers, answersByID)
 	if err != nil {
 		log.Printf("whatsapp answer extraction failed; trying local parser: %v", err)
-		analysis = whatsappAIAnalysis{Intent: "answers", Answers: localWhatsAppAnswers(text, questions)}
+		analysis = whatsappAIAnalysis{Intent: "answers", Answers: localWhatsAppAnswerForCurrentQuestion(text, questions, currentQuestionID)}
 	} else {
 		if analysis.Intent == "ignore" {
 			return a.ignoreWhatsAppCandidate(ctx, candidateID)
@@ -540,7 +540,7 @@ func (a *App) processWhatsAppTextAI(ctx context.Context, candidateID, mode, toke
 		for _, item := range analysis.Answers {
 			seen[item.QuestionID] = true
 		}
-		for _, item := range localWhatsAppAnswers(text, questions) {
+		for _, item := range localWhatsAppAnswerForCurrentQuestion(text, questions, currentQuestionID) {
 			if !seen[item.QuestionID] {
 				analysis.Answers = append(analysis.Answers, item)
 				seen[item.QuestionID] = true
